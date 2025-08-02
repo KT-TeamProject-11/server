@@ -1,0 +1,31 @@
+# ── API & 웹 ─────────────────────
+fastapi>=0.111          # Pydantic v2 호환
+uvicorn[standard]>=0.29
+python-dotenv>=1.0
+openai>=1.14
+
+# ── LangChain & LLM 래퍼 ──────────
+langchain==0.1.*        # 0.1.x 고정
+langchain-community>=0.0.38
+langchain-openai>=0.1.7
+
+# ── 벡터 DB & 검색 ────────────────
+faiss-cpu>=1.7
+rank_bm25>=0.2.2
+duckduckgo-search>=8.1.1
+
+# ── 임베딩 & 모델 ────────────────
+torch>=2.1               # CUDA 사용 시 알맞은 버전으로 교체 가능
+sentence-transformers>=2.7
+
+# ── 텍스트 전처리 & 크롤링 ───────
+beautifulsoup4>=4.12
+tqdm>=4.66
+py-hanspell>=1.1      # 한국어 맞춤법/오타 교정
+rapidfuzz>=3.6           # 퍼지 매칭
+
+# ── 스키마 ───────────────────────
+pydantic>=2.6
+
+
+rapidfuzz
