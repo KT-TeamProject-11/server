@@ -42,7 +42,7 @@ source venv/bin/activate
 ```
 3. 패키지 설치
 ```
-pip install -r requirements.txt
+pip install -r requirements.txt or make
 ```
 4. 데이터 인제스트 (먼저수행 임의 데이터 만들어서 테스트 해봄 -> html 참고)
 ```
