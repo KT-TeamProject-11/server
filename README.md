@@ -32,7 +32,7 @@ Backend/
 
 프로젝트를 로컬 환경에 복제(clone)합니다.
 ```
-git clone <https://github.com/KT-TeamProject-11/Backend>
+git clone <https://github.com/KT-TeamProject-11/server>
 cd Backend
 ```
 2. 가상환경 생성 & 활성화
