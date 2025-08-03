@@ -72,7 +72,7 @@ URL: http://localhost:8555/docs
 ```
 
 ## 프론트엔드 실행 및 테스트
-별도로 제공되는 Frontend 레포지토리를 클론하여 실행하면, 웹 UI를 통해 백엔드 API(http://localhost:8666으로 요청)에 질문을 보내고 답변을 확인하는 전체적인 테스트를 진행할 수 있습니다. -> 참고(https://github.com/KT-TeamProject-11/Frontend)
+별도로 제공되는 Frontend 레포지토리를 클론하여 실행하면, 웹 UI를 통해 백엔드 API(http://localhost:8666으로 요청)에 질문을 보내고 답변을 확인하는 전체적인 테스트를 진행할 수 있습니다. -> 참고(https://github.com/KT-TeamProject-11/client)
 
 
 
