@@ -17,6 +17,9 @@ from .retriever import get_retriever
 from .reranker import rerank
 from .verifier import fact_check
 
+from .programs import get_program_url
+from .utils import extract_program_name
+
 # ─────────────────── LLM 설정 ───────────────────────────────────────
 _LLM = ChatOpenAI(
     model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
@@ -80,11 +83,29 @@ def _ask_llm(question: str, ctx: str | None) -> str:
     )
     return _LLM.invoke([_SYS, HumanMessage(content=prompt)]).content.strip()
 
+def _program_link_ctx(q: str) -> Tuple[str | None, str | None]:
+    prog_name = extract_program_name(q)
+    if not prog_name:
+        return None, None
+    url = get_program_url(prog_name)
+    return prog_name, url
+
 # ─────────────────── 메인 엔드포인트 ────────────────────────────────
 def ask(question: str) -> str:
     # 0) 질문 그대로 사용
     norm_q = _normalize_q(question)
     print(f"[DEBUG] raw='{question}' → norm='{norm_q}'")
+
+    # 0-a) 프로그램 링크 전용 질문 필터링
+    prog, url = _program_link_ctx(norm_q)
+    if prog:
+        if url:
+            # (링크만) f"'{prog}'은(는) 아래 링크에서 확인할 수 있습니다:\n👉 {url}\n\n▲confidence: Rule (program)"
+            return (f"'{prog}' 정보는 아래 링크에서 바로 확인할 수 있습니다:\n\n"
+                            f"[**{prog} 홈페이지 바로가기**]({url})\n\n"
+                            f"▲confidence: Rule (program)")        
+        else:
+            return f"'{prog}'에 대한 공식 사이트를 찾을 수 없습니다.\n\n▲confidence: Rule (not found)"
 
     # 1) 로컬 벡터·BM25 검색 + Cross-Encoder 재랭크
     ctx, best = _local_ctx(norm_q)
