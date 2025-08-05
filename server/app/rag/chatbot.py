@@ -84,12 +84,6 @@ def _ask_llm(question: str, ctx: str | None) -> str:
     )
     return _LLM.invoke([_SYS, HumanMessage(content=prompt)]).content.strip()
 
-# def _program_link_ctx(q: str) -> Tuple[str | None, str | None]:
-#     prog_name = extract_program_name(q)
-#     if not prog_name:
-#         return None, None
-#     url = get_program_url(prog_name)
-#     return prog_name, url
 
 # ─────────────────── 메인 엔드포인트 ────────────────────────────────
 def ask(question: str) -> str:
