@@ -19,7 +19,7 @@ INDEX_OUT = Path("app/data/index.faiss")
 splitter  = RecursiveCharacterTextSplitter(chunk_size=400, chunk_overlap=40)
 chunks: list[str] = []
 metas : list[dict] = []
-
+## hi
 # ── 1) HTML ────────────────────────────────────────────────
 for fp in glob.glob(f"{RAW_DIR}/**/*.html", recursive=True):
     with open(fp, encoding="utf-8") as fh:
