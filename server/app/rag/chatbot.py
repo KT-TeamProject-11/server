@@ -17,6 +17,10 @@ from .retriever import get_retriever
 from .reranker import rerank
 from .verifier import fact_check
 
+# ──────────────────── 프로그램 링크 추출 ─────────────────────────────
+from .programs import get_all_aliases, get_program_by_alias
+from .utils import classify_intent_and_extract_entity   
+
 # ─────────────────── LLM 설정 ───────────────────────────────────────
 _LLM = ChatOpenAI(
     model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
@@ -80,11 +84,56 @@ def _ask_llm(question: str, ctx: str | None) -> str:
     )
     return _LLM.invoke([_SYS, HumanMessage(content=prompt)]).content.strip()
 
+# def _program_link_ctx(q: str) -> Tuple[str | None, str | None]:
+#     prog_name = extract_program_name(q)
+#     if not prog_name:
+#         return None, None
+#     url = get_program_url(prog_name)
+#     return prog_name, url
+
 # ─────────────────── 메인 엔드포인트 ────────────────────────────────
 def ask(question: str) -> str:
     # 0) 질문 그대로 사용
     norm_q = _normalize_q(question)
     print(f"[DEBUG] raw='{question}' → norm='{norm_q}'")
+
+    # 1단계: LLM으로 의도와 핵심 키워드 추출
+    intent_result = classify_intent_and_extract_entity(norm_q, _LLM)
+    print(f"[DEBUG] intent_result={intent_result}")
+
+    if intent_result.get("intent") == 'find_program_url':
+        prog_name_keyword = intent_result.get("program_name")
+        if prog_name_keyword:
+            
+            # 2단계: RapidFuzz로 가장 유사한 별칭(alias) 찾기
+            all_aliases = get_all_aliases() # programs.py에서 모든 별칭 가져오기
+            # extractOne이 (가장 비슷한 별칭, 유사도 점수, 인덱스)를 반환
+            best_match, score, _ = process.extractOne(
+                prog_name_keyword,
+                all_aliases,
+                scorer=fuzz.WRatio # WRatio가 유사도 계산에 효과적
+            )
+
+            print(f"[DEBUG] Keyword='{prog_name_keyword}', Best Match='{best_match}', Score={score:.2f}")
+
+            # 3단계: 찾은 별칭으로 URL 가져오기 (유사도 75점 이상일 때만)
+            if score >= 75:
+                program_details = get_program_by_alias(best_match)
+                if program_details:
+                    url = program_details["url"]
+                    # 정식 명칭을 찾기 위해 key를 역으로 탐색 (선택사항, 없어도 됨)
+                    # 이 부분은 복잡하면 prog_name_keyword를 그대로 사용해도 괜찮습니다.
+                    formal_name = best_match # 간단하게 일치한 별칭을 이름으로 사용
+
+                    return (f"'{formal_name}' 정보는 아래 링크에서 바로 확인할 수 있습니다:\n\n"
+                            f"[**{formal_name} 홈페이지 바로가기**]({url})\n\n"
+                            f"▲confidence: Rule (program, score={score:.0f})")
+            else:
+                return (f"'{prog_name_keyword}'에 대한 정확한 프로그램 정보를 찾을 수 없습니다. "
+                        f"조금 더 구체적인 이름으로 질문해주시겠어요?\n\n"
+                        f"▲confidence: Rule (not found)")
+
+    # --- 만약 위 `if` 문에서 아무것도 반환되지 않았다면, 아래 로직이 실행됨
 
     # 1) 로컬 벡터·BM25 검색 + Cross-Encoder 재랭크
     ctx, best = _local_ctx(norm_q)
