@@ -94,31 +94,45 @@ def _ask_llm(question: str, ctx: str | None) -> str:
     )
     return _LLM.invoke([_SYS, HumanMessage(content=prompt)]).content.strip()
 
-# ─────────────── 룰 기반 즉답 ────────────────────────────────
-def rule_based_answer(user_input: str) -> str | None:
-    q = user_input.lower()
 
-    # ▶ 신청 자격 질문 (→ 나도 가능해?)
+
+def classify_question(q: str) -> str | None:
+    q = q.lower()
+
+    if "투어" in q and any(kw in q for kw in ["신청", "자격", "누가", "가능", "할 수"]):
+        return "투어_자격"
+    
+    if any(kw in q for kw in ["현재", "진행", "세미나", "프로그램", "참여 가능", "신청 가능", "지금 하고"]) and "투어" not in q:
+        return "현재_프로그램"
+    
     if any(kw in q for kw in ["신청할 수", "참여할 수", "될까요", "신청 가능할까요", "나", "저"]) and "투어" not in q:
+        return "일반_신청"
+    
+    return None
+
+
+def rule_based_answer(q: str) -> str | None:
+    tag = classify_question(q)
+
+    if tag == "일반_신청":
         return (
             "도시재생 프로그램은 천안시에 거주하거나 관심 있는 시민 누구나 신청하실 수 있어요. "
             "프로그램에 따라 조건이 다를 수 있으니 안내 문구를 꼭 확인해주세요!"
         )
 
-    # ▶ 현재 프로그램 질문
-    if any(kw in q for kw in ["현재", "진행", "프로그램", "세미나", "지금 하고", "참여 가능한", "신청 가능한"]) and "투어" not in q:
+    elif tag == "현재_프로그램":
         return (
             "현재 진행 중인 프로그램은 '로컬브랜딩 활용과 확산전략 정책 세미나'가 있습니다."
         )
 
-    # ▶ 투어 신청 자격 질문
-    if "투어" in q and any(kw in q for kw in ["신청", "자격", "누가", "가능", "할 수"]):
+    elif tag == "투어_자격":
         return (
             "도시재생 투어는 천안시 도시재생사업에 관심 있는 시민 누구나 신청하실 수 있어요. "
             "또한 천안시 선진지 답사를 희망하는 외부 센터도 가능합니다."
         )
 
     return None
+
 
 
 # ─────────────────── 메인 엔드포인트 ────────────────────────────────
