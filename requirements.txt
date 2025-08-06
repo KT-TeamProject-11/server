@@ -28,3 +28,4 @@ pydantic>=2.6
 
 
 rapidfuzz
+redis>=4.0

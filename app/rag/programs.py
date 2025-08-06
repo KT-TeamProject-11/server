@@ -1,3 +1,4 @@
+from typing import Optional
 # 모든 프로그램 정보를 담는 _PROGRAMS 딕셔너리
 _PROGRAMS = {
     # "도시재생지원센터 센터소개"가 정식 명칭 (Key)
@@ -201,7 +202,7 @@ def get_all_aliases() -> list[str]:
         ])
     return all_aliases
 
-def get_program_by_alias(alias: str) -> dict | None:
+def get_program_by_alias(alias: str) -> Optional[dict]:
     """특정 별칭이 속한 프로그램의 전체 정보(URL 포함)를 반환합니다."""
     for details in _PROGRAMS.values():
         if alias in details["aliases"]:
