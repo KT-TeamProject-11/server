@@ -119,8 +119,9 @@ def ask(question: str) -> str:
                     # 이 부분은 복잡하면 prog_name_keyword를 그대로 사용해도 괜찮습니다.
                     formal_name = best_match # 간단하게 일치한 별칭을 이름으로 사용
 
-                    return (f"'{formal_name}' 정보는 아래 링크에서 바로 확인할 수 있습니다:\n\n"
-                            f"[**{formal_name} 홈페이지 바로가기**]({url})\n\n"
+                    # 프론트에 dangerouslySetInnerHTML 사용
+                    return (f"'{formal_name}' 정보는 아래 링크에서 바로 확인할 수 있습니다:<br><br>"
+                            f"<a href='{url}' target='_blank'><strong>{formal_name} 홈페이지 바로가기</strong></a><br><br>"
                             f"▲confidence: Rule (program, score={score:.0f})")
             else:
                 return (f"'{prog_name_keyword}'에 대한 정확한 프로그램 정보를 찾을 수 없습니다. "
