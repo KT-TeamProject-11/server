@@ -1,83 +1,108 @@
 #!/usr/bin/env python3
-import sys
-import os
-
-# 1) 프로젝트 루트를 PYTHONPATH에 추가 (–m 모드로 실행하면 필요 없습니다)
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-
-import glob
-import json
-import csv
-import xml.etree.ElementTree as ET
+# scripts/build_index.py  (clean 기반 인덱싱)
+import os, glob, json
 from pathlib import Path
+from typing import Dict, Tuple
 
-from bs4 import BeautifulSoup
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from app.rag.embeddings import get_embedder
 from langchain_community.vectorstores import FAISS
+from app.rag.embeddings import get_embedder  # ← 경로 주의!
 
-# 크롤링된 원본 데이터 디렉터리
-RAW_DIR = Path("app/data/raw")
-# 생성할 FAISS 인덱스 경로
-INDEX_OUT = Path("app/data/index.faiss")
+# 1) 인덱싱 소스(클린 산출물)
+CLEAN_DIR  = Path("app/data/clean")
+# 2) 출력 FAISS 경로
+INDEX_OUT  = Path("app/data/index.faiss")
 
-# 텍스트 청크 분할기
 splitter = RecursiveCharacterTextSplitter(chunk_size=400, chunk_overlap=40)
-
 texts, metas = [], []
 
-# ── 1) HTML 파일 처리 ─────────────────
-for fp in glob.glob(str(RAW_DIR / "*.html")):
-    raw = Path(fp).read_text(encoding="utf-8", errors="ignore")
-    txt = BeautifulSoup(raw, "html.parser").get_text(" ", strip=True)
-    for chunk in splitter.split_text(txt):
-        texts.append(chunk)
-        metas.append({"source": fp})
+def add_text(txt: str, meta: Dict):
+    txt = (txt or "").strip()
+    if not txt:
+        return
+    for ck in splitter.split_text(txt):
+        if ck.strip():
+            texts.append(ck)
+            metas.append(meta)
 
-# ── 2) CSV 파일 처리 ──────────────────
-for fp in glob.glob(str(RAW_DIR / "*.csv")):
-    with open(fp, newline="", encoding="utf-8", errors="ignore") as fh:
-        reader = csv.reader(fh)
-        for row in reader:
-            row_txt = " | ".join(row)
-            for chunk in splitter.split_text(row_txt):
-                texts.append(chunk)
-                metas.append({"source": fp})
+def read_manifest(cat_dir: Path) -> Dict[str, Dict]:
+    """
+    카테고리 폴더의 manifest.jsonl 읽어서
+    key=파일베이스명(slug-suffix) → {url, images[]} 매핑 반환
+    """
+    man = {}
+    mf = cat_dir / "manifest.jsonl"
+    if not mf.exists():
+        return man
+    with mf.open(encoding="utf-8", errors="ignore") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                obj = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            text_path = obj.get("text_path", "")
+            base = Path(text_path).stem if text_path else None
+            if base:
+                man[base] = {
+                    "url": obj.get("url"),
+                    "images": obj.get("images") or []
+                }
+    return man
 
-# ── 3) JSON 파일 처리 ─────────────────
-def _flatten(obj):
-    if isinstance(obj, dict):
-        return " ".join(_flatten(v) for v in obj.values())
-    if isinstance(obj, list):
-        return " ".join(_flatten(v) for v in obj)
-    return str(obj)
+def parse_markdown_title(md: str) -> Tuple[str, str]:
+    """
+    파일 상단의 '# 제목'과 '> Source: URL'을 찾아 반환.
+    (없으면 빈 문자열)
+    """
+    title, source = "", ""
+    for line in md.splitlines():
+        s = line.strip()
+        if not title and s.startswith("# "):
+            title = s[2:].strip()
+        elif not source and s.lower().startswith("> source:"):
+            source = s.split(":", 1)[-1].strip()
+        if title and source:
+            break
+    return title, source
 
-for fp in glob.glob(str(RAW_DIR / "*.json")):
-    with open(fp, encoding="utf-8", errors="ignore") as fh:
-        data = json.load(fh)
-    txt = _flatten(data)
-    for chunk in splitter.split_text(txt):
-        texts.append(chunk)
-        metas.append({"source": fp})
+# ─────────────────────────────────────────────────────────────
+if not CLEAN_DIR.exists():
+    raise RuntimeError(f"❗ 클린 디렉터리가 없습니다: {CLEAN_DIR}")
 
-# ── 4) XML 파일 처리 ──────────────────
-for fp in glob.glob(str(RAW_DIR / "*.xml")):
-    tree = ET.parse(fp)
-    root = tree.getroot()
-    txt = " ".join(elem.text.strip() for elem in root.iter() if elem.text)
-    for chunk in splitter.split_text(txt):
-        texts.append(chunk)
-        metas.append({"source": fp})
+for cat_dir in sorted(p for p in CLEAN_DIR.iterdir() if p.is_dir()):
+    text_dir = cat_dir / "text"
+    if not text_dir.exists():
+        continue
 
-# ── 5) FAISS 인덱스 생성 & 저장 ────────
-store = FAISS.from_texts(
-    texts,
-    get_embedder(),
-    metadatas=metas
-)
+    manifest = read_manifest(cat_dir)
 
-# 인덱스 디렉터리 없으면 생성
+    # 모든 md 파일 재귀 스캔
+    for fp in glob.glob(str(text_dir / "**" / "*.md"), recursive=True):
+        p = Path(fp)
+        md = p.read_text(encoding="utf-8", errors="ignore")
+        title_md, src_in_md = parse_markdown_title(md)
+
+        base = p.stem
+        man = manifest.get(base, {})
+        url = src_in_md or man.get("url")
+        images = man.get("images") or []
+
+        meta = {
+            "source": fp,                  # 원본 md 경로
+            "category": cat_dir.name,      # 카테고리명(센터소개/사업소개 등)
+            "title": title_md,             # md 첫 헤더
+            "url": url,                    # manifest 혹은 md 헤더에서 추출
+            "images": images,              # 연관 이미지 경로 리스트
+        }
+        add_text(md, meta)
+
+if not texts:
+    raise RuntimeError(f"❗ 인덱싱할 텍스트가 없습니다: {CLEAN_DIR}/**/text/*.md")
+
+store = FAISS.from_texts(texts, get_embedder(), metadatas=metas)
 INDEX_OUT.parent.mkdir(parents=True, exist_ok=True)
 store.save_local(str(INDEX_OUT))
-
-print("✅ FAISS 인덱스 생성 완료:", INDEX_OUT)
+print(f"✅ FAISS 인덱스 생성 완료: {INDEX_OUT} (chunks={len(texts)})")
