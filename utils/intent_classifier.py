@@ -10,7 +10,7 @@ from functools import lru_cache
 from typing import Dict, Optional, Tuple, List
 
 import torch
-from transformers import BertTokenizer, BertForSequenceClassification
+from transformers import AutoTokenizer, BertForSequenceClassification  # ✅ 수정: AutoTokenizer 사용
 
 from app.rag.programs import get_all_aliases
 from .intent_prompt import INTENT_PROMPT_TEMPLATE  
@@ -42,7 +42,7 @@ def _rule_program(text: str) -> Optional[str]:
 def _load_kobert():
     # HF 허브에 반드시 존재하는 기본 모델로 설정
     model_id = os.getenv("CLASSIFY_MODEL_ID", "skt/kobert-base-v1")
-    tok = BertTokenizer.from_pretrained(model_id)
+    tok = AutoTokenizer.from_pretrained(model_id)  # ✅ AutoTokenizer로 변경
     mdl = BertForSequenceClassification.from_pretrained(model_id, num_labels=2)  # 0:url,1:general
     device = "cuda" if torch.cuda.is_available() else "cpu"
     mdl.to(device).eval()
