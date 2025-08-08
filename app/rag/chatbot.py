@@ -7,6 +7,7 @@ import hashlib
 import textwrap
 import asyncio
 import contextlib
+import re # 🔴추가
 from typing import Tuple, Optional
 
 from langchain_openai import ChatOpenAI
@@ -19,7 +20,7 @@ from .prompt import PROMPT, ALL_SOURCES_PROMPT
 from .retriever import get_retriever
 from .reranker import rerank
 from .verifier import fact_check
-from .programs import get_all_aliases, get_program_by_alias
+from .programs import get_all_aliases, get_all_tags, get_program_by_alias, get_programs_by_tag
 from utils.intent_classifier import classify_intent_and_extract_entity
 
 # ───────────── 환경변수 로드 ─────────────
@@ -63,11 +64,37 @@ _SEARCH     = DuckDuckGoSearchRun(backend="auto")
 def _normalize(q: str) -> str:
     return q.strip()
 
+# 🔴추가
+def _linkify(text: str) -> str:
+    """응답 내 URL을 하이퍼링크로 변환"""
+    url_pattern = re.compile(r'(https?://[^\s]+)')
+    return url_pattern.sub(r'<a href="\1" target="_blank">\1</a>', text)
+
 def _local_ctx(q: str) -> Tuple[str, float]:
     docs = [d.page_content for d in get_retriever().get_relevant_documents(q)]
     top_docs, best = rerank(q, docs, top_n=TOP_K) if docs else ([], 0.0)
     ctx = "\n\n".join(textwrap.shorten(d, 400) for d in top_docs)
     return ctx, best
+
+
+
+# def _local_ctx(q: str) -> Tuple[str, float]:
+#     raw_docs = get_retriever().get_relevant_documents(q)
+
+#     # 🟡 디버깅 로그 추가
+#     print("\n🟡 [DEBUG] Retrieved Documents:")
+#     for i, d in enumerate(raw_docs):
+#         print(f"  {i+1}.")
+#         print(f"    > Metadata: {d.metadata}")
+#         print(f"    > Page content (앞부분): {d.page_content[:150]}")
+
+#     docs = [d.page_content for d in raw_docs]
+#     top_docs, best = rerank(q, docs, top_n=TOP_K) if docs else ([], 0.0)
+#     ctx = "\n\n".join(textwrap.shorten(d, 400) for d in top_docs)
+#     return ctx, best
+
+
+
 
 def _fuzzy_ctx(q: str) -> str:
     vect = get_retriever().retrievers[0]
@@ -115,7 +142,7 @@ async def ask_async(question: str) -> str:
 
     # 0) 캐시 우선
     if (cached := await _get_cached(blank_key)):
-        return f"{cached}\n\n▲confidence: Cached"
+        return f"{_linkify(cached)}\n\n▲confidence: Cached"
 
     # 1) 내부 RAG
     local_ctx, score = _local_ctx(q)
@@ -123,20 +150,50 @@ async def ask_async(question: str) -> str:
         ans, src = await _gate_llm(q, local_ctx)
         if not ans.startswith("모르겠습니다"):
             asyncio.create_task(_set_cached(_cache_key(q, local_ctx), ans))
-            return f"{ans}\n\n▲confidence: High ({src})"
+            return f"{_linkify(ans)}\n\n▲confidence: High ({src})"
         # “모르겠습니다” 면 다음 단계 진행
 
     # 2) 룰 기반 URL
     rule_ctx = ""
     intent = classify_intent_and_extract_entity(q)
+
+    print(">>>>> DEBUG: Intent Result:", intent) 
+
     if intent.get("intent") == "find_program_url":
         name = intent.get("program_name") or ""
-        best, s, _ = process.extractOne(name, get_all_aliases(), scorer=fuzz.WRatio)
-        if s >= 75 and (info := get_program_by_alias(best)):
-            rule_ctx = f"'{best}' 홈페이지: {info['url']}"
-            ans = rule_ctx
-            asyncio.create_task(_set_cached(blank_key, ans))
-            return f"{ans}\n\n▲confidence: Rule (score={s:.0f})"
+        # --- 1단계: '태그'와 거의 완벽하게 일치하는지 먼저 확인 ---
+        all_tags = get_all_tags()
+        best_tag, s_tag, _ = process.extractOne(name, all_tags, scorer=fuzz.WRatio)
+        
+        print("teg score : ", s_tag)
+        print("best tag: ", best_tag)
+        # 태그 점수가 95점 이상으로 매우 높으면, 그룹 질문으로 간주
+        if s_tag >= 95:
+            programs = get_programs_by_tag(best_tag)
+            if programs:
+                links = [f"- {p['name']}: {p['url']}" for p in programs]
+                ans = f"'{best_tag}' 관련 페이지 목록입니다.\n\n" + "\n".join(links)
+                asyncio.create_task(_set_cached(blank_key, ans))
+                return f"{_linkify(ans)}\n\n▲confidence: Rule (Group, score={s_tag:.0f})"
+
+        # --- 2단계: 일치하는 태그가 없으면, 가장 비슷한 '별칭'을 검색 ---
+        best_alias, s_alias, _ = process.extractOne(name, get_all_aliases(), scorer=fuzz.WRatio)
+        
+        # 별칭 점수가 85점 이상이면 개별 항목으로 간주 (기준 점수 조정 가능)
+        if s_alias >= 85:
+            info = get_program_by_alias(best_alias)
+            if info:
+                ans = f"'{best_alias}' 페이지입니다: {info['url']}"
+                asyncio.create_task(_set_cached(blank_key, ans))
+                return f"{_linkify(ans)}\n\n▲confidence: Rule (Alias, score={s_alias:.0f})"
+
+
+        # best, s, _ = process.extractOne(name, get_all_aliases(), scorer=fuzz.WRatio)
+        # if s >= 75 and (info := get_program_by_alias(best)):
+        #     rule_ctx = f"'{best}' 홈페이지: {info['url']}"
+        #     ans = rule_ctx
+        #     asyncio.create_task(_set_cached(blank_key, ans))
+        #     return f"{_linkify(ans)}\n\n▲confidence: Rule (score={s:.0f})"
 
     # 3) 퍼지 매칭
     fuzzy_ctx = _fuzzy_ctx(q)
@@ -144,7 +201,7 @@ async def ask_async(question: str) -> str:
         ans, src = await _gate_llm(q, fuzzy_ctx)
         if not ans.startswith("모르겠습니다") and fact_check(q, ans):
             asyncio.create_task(_set_cached(_cache_key(q, fuzzy_ctx), ans))
-            return f"{ans}\n\n▲confidence: Mid ({src})"
+            return f"{_linkify(ans)}\n\n▲confidence: Mid ({src})"
 
     # 4) 웹 검색
     web_ctx = _web_ctx(q)
@@ -152,12 +209,12 @@ async def ask_async(question: str) -> str:
         ans, src = await _gate_llm(q, web_ctx)
         if not ans.startswith("모르겠습니다"):
             asyncio.create_task(_set_cached(_cache_key(q, web_ctx), ans))
-            return f"{ans}\n\n▲confidence: Mid ({src})"
+            return f"{_linkify(ans)}\n\n▲confidence: Mid ({src})"
 
     # 5) 종합 컨텍스트 물어보기 (최종 fallback)
     final_ans = _ask_all_sources(q, local_ctx, rule_ctx, web_ctx)
     asyncio.create_task(_set_cached(blank_key, final_ans))
-    return f"{final_ans}\n\n▲confidence: Low (AllSources)"
+    return f"{_linkify(final_ans)}\n\n▲confidence: Low (AllSources)"
 
 
 '''
