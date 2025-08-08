@@ -57,7 +57,7 @@ _SYS = SystemMessage(
 )
 _LLM        = ChatOpenAI(model=OPENAI_MODEL, temperature=0.2, top_p=0.9, api_key=OPENAI_API_KEY)
 _LLM_LOCAL  = ChatOpenAI(base_url=LLAMA_API_URL, api_key="none",
-                         model="llama-3-8b-instruct-q4", temperature=0.2)
+                         model="llama-3-8b-instruct-q4",  temperature=0.2)
 _LLM_BACKUP = _LLM
 _SEARCH     = DuckDuckGoSearchRun(backend="auto")
 
