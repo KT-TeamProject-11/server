@@ -6,7 +6,8 @@ app = FastAPI(title="Cheonan URC Chatbot")
 
 origins = [
     "http://localhost",
-    "http://localhost:8666", 
+    "http://localhost:8666",
+    "http://127.0.0.1:8666",  # ✅ 프론트 포트 허용
 ]
 
 app.add_middleware(

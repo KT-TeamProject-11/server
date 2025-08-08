@@ -18,4 +18,11 @@ async def chat(query: Query):
             yield ch
             await asyncio.sleep(0.06)
 
-    return StreamingResponse(char_stream(), media_type="text/plain")
+    return StreamingResponse(
+        char_stream(),
+        media_type="text/plain",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
