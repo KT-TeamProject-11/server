@@ -23,6 +23,7 @@ from .programs import get_all_aliases, get_program_by_alias
 from utils.intent_classifier import classify_intent_and_extract_entity
 
 # ───────────── 환경변수 로드 ─────────────
+OPENAI_API_KEY = os.environ["OPENAI_API_KEY"]
 OPENAI_MODEL   = os.environ["OPENAI_MODEL"]
 LLAMA_API_URL  = os.environ["LLAMA_API"]
 REDIS_URL      = os.environ["REDIS_URL"]
@@ -53,9 +54,9 @@ def _cache_key(q: str, ctx: str) -> str:
 _SYS = SystemMessage(
     content="너는 천안 도시재생지원센터 전용 챗봇이야. 필요한 정보를 찾아서 정확하게 답변해줘."
 )
-_LLM        = ChatOpenAI(model=OPENAI_MODEL, temperature=0.2, top_p=0.9)
+_LLM        = ChatOpenAI(model=OPENAI_MODEL, temperature=0.2, top_p=0.9, api_key=OPENAI_API_KEY)
 _LLM_LOCAL  = ChatOpenAI(base_url=LLAMA_API_URL, api_key="none",
-                         model="llama-3-8b-instruct-q4", temperature=0.2)
+                         model="llama-3-8b-instruct-q4",  temperature=0.2)
 _LLM_BACKUP = _LLM
 _SEARCH     = DuckDuckGoSearchRun(backend="auto")
 
