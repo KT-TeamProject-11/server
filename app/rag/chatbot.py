@@ -157,6 +157,7 @@ async def ask_async(question: str) -> str:
     rule_ctx = ""
     intent = classify_intent_and_extract_entity(q)
 
+    # 의도 확인용
     print(">>>>> DEBUG: Intent Result:", intent) 
 
     if intent.get("intent") == "find_program_url":
@@ -165,7 +166,8 @@ async def ask_async(question: str) -> str:
         all_tags = get_all_tags()
         best_tag, s_tag, _ = process.extractOne(name, all_tags, scorer=fuzz.WRatio)
         
-        print("teg score : ", s_tag)
+        # 태그 내용, 점수 확인용
+        print("tag score : ", s_tag)
         print("best tag: ", best_tag)
         # 태그 점수가 95점 이상으로 매우 높으면, 그룹 질문으로 간주
         if s_tag >= 95:
@@ -179,6 +181,10 @@ async def ask_async(question: str) -> str:
         # --- 2단계: 일치하는 태그가 없으면, 가장 비슷한 '별칭'을 검색 ---
         best_alias, s_alias, _ = process.extractOne(name, get_all_aliases(), scorer=fuzz.WRatio)
         
+        # 별칭 내용, 점수 확인용
+        print("alias score : ", s_alias)
+        print("best alias: ", best_alias)
+
         # 별칭 점수가 85점 이상이면 개별 항목으로 간주 (기준 점수 조정 가능)
         if s_alias >= 85:
             info = get_program_by_alias(best_alias)

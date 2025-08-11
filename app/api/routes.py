@@ -35,5 +35,5 @@ async def chat(query: Query):
             "Cache-Control": "no-cache",
             "X-Accel-Buffering": "no",
         },
-      }
+    )
 
