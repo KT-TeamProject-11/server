@@ -30,3 +30,6 @@ pydantic>=2.6
 rapidfuzz
 redis>=4.0
 Pillow>=10
+pytesseract 
+pillow
+opencv-python
