@@ -1,20 +1,17 @@
-#!/usr/bin/env python3
-# scripts/build_index.py  (clean 기반 인덱싱)
 import os, glob, json
 from pathlib import Path
-from typing import Dict, Tuple
+from typing import Dict, Tuple, List
 
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
-from app.rag.embeddings import get_embedder  # ← 경로 주의!
+from app.rag.embeddings import get_embedder 
 
-# 1) 인덱싱 소스(클린 산출물)
 CLEAN_DIR  = Path("app/data/clean")
-# 2) 출력 FAISS 경로
 INDEX_OUT  = Path("app/data/index.faiss")
 
 splitter = RecursiveCharacterTextSplitter(chunk_size=400, chunk_overlap=40)
-texts, metas = [], []
+texts: List[str] = []
+metas: List[Dict] = []
 
 def add_text(txt: str, meta: Dict):
     txt = (txt or "").strip()
@@ -26,11 +23,7 @@ def add_text(txt: str, meta: Dict):
             metas.append(meta)
 
 def read_manifest(cat_dir: Path) -> Dict[str, Dict]:
-    """
-    카테고리 폴더의 manifest.jsonl 읽어서
-    key=파일베이스명(slug-suffix) → {url, images[]} 매핑 반환
-    """
-    man = {}
+    man: Dict[str, Dict] = {}
     mf = cat_dir / "manifest.jsonl"
     if not mf.exists():
         return man
@@ -48,15 +41,12 @@ def read_manifest(cat_dir: Path) -> Dict[str, Dict]:
             if base:
                 man[base] = {
                     "url": obj.get("url"),
-                    "images": obj.get("images") or []
+                    "images": obj.get("images") or [],
+                    "image_ocr_texts": obj.get("image_ocr_texts") or [],
                 }
     return man
 
 def parse_markdown_title(md: str) -> Tuple[str, str]:
-    """
-    파일 상단의 '# 제목'과 '> Source: URL'을 찾아 반환.
-    (없으면 빈 문자열)
-    """
     title, source = "", ""
     for line in md.splitlines():
         s = line.strip()
@@ -68,7 +58,7 @@ def parse_markdown_title(md: str) -> Tuple[str, str]:
             break
     return title, source
 
-# ─────────────────────────────────────────────────────────────
+
 if not CLEAN_DIR.exists():
     raise RuntimeError(f"❗ 클린 디렉터리가 없습니다: {CLEAN_DIR}")
 
@@ -89,6 +79,18 @@ for cat_dir in sorted(p for p in CLEAN_DIR.iterdir() if p.is_dir()):
         man = manifest.get(base, {})
         url = src_in_md or man.get("url")
         images = man.get("images") or []
+        ocr_txts = man.get("image_ocr_texts") or []
+
+        ocr_concat: List[str] = []
+        for ocr_fp in ocr_txts:
+            try:
+                t = Path(ocr_fp).read_text(encoding="utf-8", errors="ignore").strip()
+                if len(t) >= 12:  # 너무 짧은 잡음 제거
+                    ocr_concat.append(t)
+            except Exception:
+                pass
+
+        combined = md + ("\n\n## [OCR]\n" + "\n\n".join(ocr_concat) if ocr_concat else "")
 
         meta = {
             "source": fp,                  # 원본 md 경로
@@ -97,7 +99,7 @@ for cat_dir in sorted(p for p in CLEAN_DIR.iterdir() if p.is_dir()):
             "url": url,                    # manifest 혹은 md 헤더에서 추출
             "images": images,              # 연관 이미지 경로 리스트
         }
-        add_text(md, meta)
+        add_text(combined, meta)
 
 if not texts:
     raise RuntimeError(f"❗ 인덱싱할 텍스트가 없습니다: {CLEAN_DIR}/**/text/*.md")

@@ -1,4 +1,5 @@
-from typing import Optional
+from typing import Optional, List, Dict
+from rapidfuzz import process, fuzz
 # 모든 프로그램 정보를 담는 _PROGRAMS 딕셔너리
 _PROGRAMS = {
     # "도시재생지원센터 센터소개"가 정식 명칭 (Key)
@@ -218,39 +219,44 @@ _PROGRAMS = {
 
 
 }
+def get_all_aliases() -> List[str]:
+    aliases: List[str] = []
+    for v in _PROGRAMS.values():
+        aliases.extend(v.get("aliases", []))
+    return aliases
 
-def get_all_aliases() -> list[str]:
-    """모든 프로그램의 별칭(alias)들을 하나의 리스트로 반환합니다."""
-    all_aliases = []
-    for details in _PROGRAMS.values():
-        all_aliases.extend(details["aliases"
-        ])
-    return all_aliases
+def get_all_tags() -> List[str]:
+    s = set()
+    for v in _PROGRAMS.values():
+        s.update(v.get("tags", []))
+    return list(s)
 
-def get_program_by_alias(alias: str) -> Optional[dict]:
-    """특정 별칭이 속한 프로그램의 전체 정보(URL 포함)를 반환합니다."""
-    for details in _PROGRAMS.values():
-        if alias in details["aliases"]:
-            return details
+def get_program_by_alias(alias: str) -> Optional[Dict]:
+    for name, v in _PROGRAMS.items():
+        if alias in v.get("aliases", []):
+            out = dict(v)
+            out["name"] = name
+            return out
     return None
 
-# programs.py 파일 맨 아래에 추가
+def get_programs_by_tag(tag: str) -> List[Dict]:
+    out: List[Dict] = []
+    for name, v in _PROGRAMS.items():
+        if tag in v.get("tags", []):
+            item = dict(v); item["name"] = name
+            out.append(item)
+    return out
 
-def get_all_tags() -> list[str]:
-    """모든 프로그램의 태그들을 중복 없이 리스트로 반환합니다."""
-    all_tags = set()
-    for details in _PROGRAMS.values():
-        if "tags" in details:
-            all_tags.update(details["tags"])
-    return list(all_tags)
+def fuzzy_find_best_alias(q: str, min_score: int = 85) -> Optional[str]:
+    aliases = get_all_aliases()
+    if not aliases:
+        return None
+    best, score, _ = process.extractOne(q, aliases, scorer=fuzz.WRatio)
+    return best if score >= min_score else None
 
-def get_programs_by_tag(tag: str) -> list[dict]:
-    """특정 태그가 포함된 모든 프로그램의 정보를 리스트로 반환합니다."""
-    tagged_programs = []
-    for name, details in _PROGRAMS.items():
-        if "tags" in details and tag in details["tags"]:
-            # 정식 명칭(name)을 정보에 추가해서 반환
-            program_info = details.copy()
-            program_info["name"] = name
-            tagged_programs.append(program_info)
-    return tagged_programs
+def fuzzy_find_best_tag(q: str, min_score: int = 92) -> Optional[str]:
+    tags = get_all_tags()
+    if not tags:
+        return None
+    best, score, _ = process.extractOne(q, tags, scorer=fuzz.WRatio)
+    return best if score >= min_score else None
