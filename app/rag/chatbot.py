@@ -1,6 +1,6 @@
 # app/rag/chatbot.py
 from __future__ import annotations
-import asyncio, contextlib, hashlib, re, textwrap, os
+import asyncio, contextlib, hashlib, re, textwrap, os, html
 from typing import Optional, Tuple, List
 
 from redis.asyncio import Redis
@@ -32,6 +32,16 @@ _LLM = ChatOpenAI(
     api_key=OPENAI_API_KEY,
     max_tokens=MAX_COMPLETION_TOKENS,
 )
+
+# 상단 정규식 부분만 교체
+_MD_LINK = re.compile(r'\[([^\]]+)\]\((https?://[^\s)]+)\)')            # [라벨](url)
+_LABEL_PAREN = re.compile(r'([^\n()]+?)\((https?://[^\s)]+)\)')         # 라벨(url)
+# href="..." 또는 href='...' 내부의 URL은 제외하고 순수 URL만 매칭
+_PLAIN_URL = re.compile(
+    r'(?<!href=")(?<!href=\')((?:https?://|www\.)[^\s<>"\')\]]+)',
+    re.IGNORECASE
+)
+
 _DDG = DuckDuckGoSearchAPIWrapper()
 _redis = Redis.from_url(REDIS_URL, encoding="utf-8", decode_responses=True)
 
@@ -51,10 +61,6 @@ async def _set_cached(key: str, val: str, ttl: int = CACHE_TTL):
     with contextlib.suppress(Exception):
         await _redis.set(key, val, ex=ttl)
 
-def _linkify(text: str) -> str:
-    url_pattern = re.compile(r'(https?://[^\s]+)')
-    return url_pattern.sub(r'<a href="\1" target="_blank">\1</a>', text)
-
 def _shorten(texts: List[str], width: int = 420) -> List[str]:
     return [textwrap.shorten(t, width, placeholder="…") for t in texts if t and t.strip()]
 
@@ -65,6 +71,38 @@ def _looks_like_idk(ans: str) -> bool:
 def _log(msg: str):
     if os.getenv("URC_DEBUG", "0") == "1":
         print(f"[URC] {msg}")
+
+def _normalize_links(text: str) -> str:
+    if not text:
+        return ""
+    s = html.unescape(str(text))
+
+    # 1) 마크다운 링크
+    s = _MD_LINK.sub(r'<a href="\2" target="_blank" rel="noopener noreferrer">\1</a>', s)
+
+    # 2) 라벨(링크)
+    s = _LABEL_PAREN.sub(r'<a href="\2" target="_blank" rel="noopener noreferrer">\1</a>', s)
+
+    # 3) 맨땅 URL (http/https/www)
+    def repl_url(m):
+        raw = m.group(1)
+        # 문장부호 꼬리 분리
+        trailing = ""
+        while raw and raw[-1] in ".,;:!?)":
+            trailing = raw[-1] + trailing
+            raw = raw[:-1]
+
+        href = raw
+        if raw.lower().startswith("www."):
+            href = "http://" + raw  # 스킴 보정
+
+        return f'<a href="{href}" target="_blank" rel="noopener noreferrer">{raw}</a>{trailing}'
+
+    s = _PLAIN_URL.sub(repl_url, s)
+
+    # 4) 줄바꿈 처리
+    s = s.replace("\n", "<br>")
+    return s
 
 # -------------------- 단계 1: 로컬(홈페이지 인덱스) --------------------
 def _local_ctx(q: str) -> Tuple[str, float, int]:
@@ -88,13 +126,14 @@ def _rule_answer(q: str) -> Optional[str]:
     if alias:
         prog = get_program_by_alias(alias)
         if prog:
-            return f"'{prog['name']}' 페이지입니다:\n{prog['url']}"
+            return (f"'{prog['name']}' 정보는 아래 링크에서 바로 확인할 수 있습니다:<br><br>"
+                f'<a href="{prog["url"]}" target="_blank"><strong>{prog["name"]} 홈페이지 바로가기</strong></a><br><br>')
     tag = info.get("tag") or fuzzy_find_best_tag(q)
     if tag:
         progs = get_programs_by_tag(tag)
         if progs:
-            lines = [f"- {p['name']}: {p['url']}" for p in progs]
-            return f"'{tag}' 관련 페이지 목록입니다.\n\n" + "\n".join(lines)
+            lines = [f"- <a href='{p['url']}' target='_blank'>{p['name']}</a>" for p in progs]
+            return f"'{tag}' 관련 페이지 목록입니다.<br><br>" + "<br>".join(lines)
     return None
 
 # -------------------- 단계 4: 퍼지(로컬 코퍼스 부분일치) --------------------
@@ -175,7 +214,7 @@ async def ask_async(question: str) -> str:
 
     base_key = _cache_key(q)
     if (cached := await _get_cached(base_key)):
-        return _linkify(cached)
+        return _normalize_links(cached)
 
     # 0) 로컬 인덱스 상태 진단 로그(선택)
     try:
@@ -190,18 +229,18 @@ async def ask_async(question: str) -> str:
         ans_local = _llm_single(q, local_ctx)
         if ans_local and not _looks_like_idk(ans_local):
             asyncio.create_task(_set_cached(base_key, ans_local))
-            return _linkify(ans_local)
+            return _normalize_links(ans_local)
         _log("local answer sounded like IDK → continue")
 
     # 2) FAQ 즉답
     if (faq_ans := _faq_answer(q)):
         asyncio.create_task(_set_cached(base_key, faq_ans))
-        return _linkify(faq_ans)
+        return _normalize_links(faq_ans)
 
     # 3) programs 룰(링크)
     if (rule_ans := _rule_answer(q)):
         asyncio.create_task(_set_cached(base_key, rule_ans))
-        return _linkify(rule_ans)
+        return _normalize_links(rule_ans)
 
     # 4) 퍼지 로컬 컨텍스트
     fuzzy_ctx = _fuzzy_ctx(q)
@@ -209,11 +248,11 @@ async def ask_async(question: str) -> str:
         ans_fuzzy = _llm_single(q, fuzzy_ctx)
         if ans_fuzzy and not _looks_like_idk(ans_fuzzy):
             asyncio.create_task(_set_cached(base_key, ans_fuzzy))
-            return _linkify(ans_fuzzy)
+            return _normalize_links(ans_fuzzy)
         _log("fuzzy answer sounded like IDK → continue")
 
     # 5) 웹검색(강제 사용) + 융합
     web_ctx = _web_ctx(q) or ""
     final = _llm_fusion(q, local_ctx or fuzzy_ctx or "", rule_ans or "", web_ctx)
     asyncio.create_task(_set_cached(base_key, final))
-    return _linkify(final)
+    return _normalize_links(final)
