@@ -6,8 +6,10 @@
 - 공통: 저장 즉시 OCR → .txt 사이드카 저장 + manifest.jsonl 기록
 - 로컬 이미지 인제스트: app/crawler/images/<문서폴더>/*.png|jpg|gif ...
   (폴더 1개 = 문서 1개로 취급)
+
 개선점:
 - PaddleOCR 기반 한국어 강화 + 전처리 앙상블 + 회전 시도 + 한글 띄어쓰기 보정
+- Tesseract/EasyOCR(선택) 폴백
 """
 
 import os
@@ -28,14 +30,15 @@ from bs4 import BeautifulSoup
 
 # ────────────────────────────────────────────────────────────
 # OCR 옵션 (환경변수로 제어)
-ENABLE_OCR: bool   = os.getenv("ENABLE_OCR", "1") == "1"
-OCR_BACKEND: str   = os.getenv("OCR_BACKEND", "paddle").lower()  # "paddle" | "tesseract"
-OCR_LANG: str      = os.getenv("OCR_LANG", "kor+eng")            # tesseract 호환 표기
-OCR_MIN_CHARS: int = int(os.getenv("OCR_MIN_CHARS", "15"))       # 너무 짧은 노이즈는 버림
+ENABLE_OCR: bool    = os.getenv("ENABLE_OCR", "1") == "1"
+# 여러 백엔드 순서를 콤마로 지정: "paddle,tesseract,easyocr"
+OCR_BACKENDS: List[str] = [s.strip().lower() for s in os.getenv("OCR_BACKENDS", "paddle,tesseract").split(",") if s.strip()]
+OCR_LANG: str       = os.getenv("OCR_LANG", "kor+eng")           # tesseract 호환 표기
+OCR_MIN_CHARS: int  = int(os.getenv("OCR_MIN_CHARS", "15"))      # 너무 짧은 노이즈는 버림
 OCR_ATTACH_TO_MD: bool = os.getenv("OCR_ATTACH_TO_MD", "1") == "1"
 
 # 인식률 개선용 옵션
-OCR_MIN_CONF: float = float(os.getenv("OCR_MIN_CONF", "0.5"))    # PaddleOCR 신뢰도 필터
+OCR_MIN_CONF: float = float(os.getenv("OCR_MIN_CONF", "0.5"))    # Paddle/Easy 신뢰도 필터
 PADDLE_OCR_LANG: Optional[str] = os.getenv("PADDLE_OCR_LANG")    # 기본 None → 자동 유추
 TESSERACT_CMD: Optional[str] = os.getenv("TESSERACT_CMD")        # /usr/bin/tesseract 등
 MAX_GIF_FRAMES: int = int(os.getenv("MAX_GIF_FRAMES", "10"))
@@ -76,13 +79,17 @@ try:
 except Exception:
     _PADDLE_AVAILABLE = False
 
+# EasyOCR (선택)
+_EASY_AVAILABLE = False
+_easy_reader = None
+try:
+    import easyocr  # type: ignore
+    _EASY_AVAILABLE = True
+except Exception:
+    _EASY_AVAILABLE = False
+
+
 def _infer_paddle_lang(ocr_lang: str, explicit: Optional[str]) -> str:
-    """
-    PaddleOCR 언어 우선순위 추론:
-      - 명시 env(PADDLE_OCR_LANG) 있으면 그 값
-      - OCR_LANG에 'kor'/'ko' 포함 → 'korean'
-      - 그 외 → 'en'
-    """
     if explicit:
         return explicit
     s = (ocr_lang or "").lower()
@@ -90,13 +97,18 @@ def _infer_paddle_lang(ocr_lang: str, explicit: Optional[str]) -> str:
         return "korean"
     return "en"
 
-if ENABLE_OCR and _PADDLE_AVAILABLE and OCR_BACKEND == "paddle":
+if ENABLE_OCR and _PADDLE_AVAILABLE and ("paddle" in OCR_BACKENDS):
     with contextlib.suppress(Exception):
         _paddle_ocr = PaddleOCR(
             lang=_infer_paddle_lang(OCR_LANG, PADDLE_OCR_LANG),
-            use_angle_cls=True,    # 각도 분류기 사용
+            use_angle_cls=True,
             show_log=False
         )
+
+if ENABLE_OCR and _EASY_AVAILABLE and ("easyocr" in OCR_BACKENDS):
+    with contextlib.suppress(Exception):
+        langs = ["ko", "en"] if "kor" in OCR_LANG or "ko" in OCR_LANG else ["en"]
+        _easy_reader = easyocr.Reader(langs, gpu=False, verbose=False)  # type: ignore
 
 # ────────────────────────────────────────────────────────────
 # 로컬 이미지 기본 루트들: images / img 둘 다 자동 탐지
@@ -115,9 +127,9 @@ CONCURRENCY = 6
 REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=30)
 BATCH_GATHER = 64
 
-# 저장할 이미지 확장자 (OCR는 래스터 이미지에만 적용)
+# 저장할 이미지 확장자
 IMG_EXTS    = (".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".tif", ".tiff", ".avif", ".jp2", ".svg")
-RASTER_EXTS = (".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff", ".jp2", ".gif")  # svg/avif는 OCR 스킵
+RASTER_EXTS = (".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff", ".jp2", ".gif")
 
 # ────────────────────────────────────────────────────────────
 # 홈페이지 SEEDS
@@ -309,17 +321,11 @@ def _resize_scale_up(img: "Image.Image") -> "Image.Image":
     return img.resize((nw, nh))
 
 def _preprocess_variants_pil(img: "Image.Image") -> List["Image.Image"]:
-    """
-    여러 전처리 버전을 생성해 앙상블로 OCR 후 최적 결과 선택
-    """
     variants: List["Image.Image"] = []
     base = _resize_scale_up(img)
-
-    # 0) 원본
     variants.append(base)
 
     if not _CV2:
-        # PIL만 있을 때 간단 전처리
         if ImageOps:
             gray = ImageOps.grayscale(base)
             variants.append(gray)
@@ -328,10 +334,7 @@ def _preprocess_variants_pil(img: "Image.Image") -> List["Image.Image"]:
             variants.append(sharp)
         return variants
 
-    # OpenCV 기반 고급 전처리
     bgr = _cv2_from_pil(base)
-
-    # 1) CLAHE (LAB 공간 L 채널)
     lab = cv2.cvtColor(bgr, cv2.COLOR_BGR2LAB)
     l, a, b = cv2.split(lab)
     clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8,8))
@@ -340,20 +343,17 @@ def _preprocess_variants_pil(img: "Image.Image") -> List["Image.Image"]:
     bgr_clahe = cv2.cvtColor(lab2, cv2.COLOR_LAB2BGR)
     variants.append(_pil_from_cv2(bgr_clahe))
 
-    # 2) 언샵 샤프닝
     gauss = cv2.GaussianBlur(bgr, (0,0), 1.0)
     unsharp = cv2.addWeighted(bgr, 1.5, gauss, -0.5, 0)
     variants.append(_pil_from_cv2(unsharp))
 
-    # 3) 적응형 이진화(가독성 향상)
     gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
     bin1 = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
                                  cv2.THRESH_BINARY, 35, 11)
     bin1 = cv2.medianBlur(bin1, 3)
     variants.append(Image.fromarray(bin1))
 
-    # 4) 대비↑ + 샤프
-    alpha, beta = 1.2, 5  # contrast, brightness
+    alpha, beta = 1.2, 5
     highc = cv2.convertScaleAbs(bgr, alpha=alpha, beta=beta)
     gauss2 = cv2.GaussianBlur(highc, (0,0), 0.8)
     sharp2 = cv2.addWeighted(highc, 1.4, gauss2, -0.4, 0)
@@ -399,10 +399,6 @@ def _preprocess_for_ocr_pil(img: "Image.Image") -> "Image.Image":  # type: ignor
     return gray
 
 def _extract_pil_frames(buf: bytes) -> List["Image.Image"]:  # type: ignore
-    """
-    GIF면 여러 프레임 추출(최대 MAX_GIF_FRAMES), 그 외 포맷은 단일 프레임 반환
-    중복 프레임은 제거하여 OCR 낭비 최소화
-    """
     im = _pil_from_bytes(buf)
     if im is None:
         return []
@@ -431,22 +427,17 @@ def _extract_pil_frames(buf: bytes) -> List["Image.Image"]:  # type: ignore
 # ── 후처리: 한글 분절 자동 결합, 공백/중복 정리 ──────────────────────────
 _HANGUL_BLOCK = r"[가-힣]"
 def _merge_hangul_separated_words(text: str) -> str:
-    """
-    '도 시 재 생 센 터' 같이 한글 사이사이 스페이스가 들어간 구간을 붙여줌.
-    """
     def _merge_block(m):
         return re.sub(r"\s+", "", m.group(0))
-    # 2자 이상 연속한글에 끼어든 공백 패턴을 찾아 합침
     pattern = rf"((?:{_HANGUL_BLOCK}\s+){{1,}}{_HANGUL_BLOCK})"
-    return re.sub(pattern, _merge_block, text)
+    return re.sub(pattern, _merge_hangul_separated_words_inner, text) if False else re.sub(pattern, _merge_block, text)
 
 def _post_process_korean(text: str) -> str:
     t = text
     t = re.sub(r"[ \t]+", " ", t)
     t = re.sub(r"\s*\n\s*", "\n", t)
-    t = re.sub(r"([.,!?])\1{2,}", r"\1\1", t)  # 과다한 반복 구두점 축소
+    t = re.sub(r"([.,!?])\1{2,}", r"\1\1", t)
     t = _merge_hangul_separated_words(t)
-    # 행 단위 중복 제거
     lines = []
     seen = set()
     for ln in t.splitlines():
@@ -458,12 +449,8 @@ def _post_process_korean(text: str) -> str:
             seen.add(k)
     return "\n".join(lines)
 
-# ── PaddleOCR 실행 ──────────────────────────────────────────
+# ── PaddleOCR/EasyOCR/Tesseract 실행 ─────────────────────────────────
 def _paddle_ocr_once(img: "Image.Image") -> Tuple[str, float]:
-    """
-    단일 이미지에 대해 PaddleOCR 실행 → (텍스트, 총점) 반환
-    총점 = Σ(conf * len(text))
-    """
     if not _paddle_ocr:
         return "", 0.0
     import numpy as np
@@ -489,41 +476,44 @@ def _paddle_ocr_once(img: "Image.Image") -> Tuple[str, float]:
     return joined, score_sum
 
 def _ocr_paddle_frames_ensemble(frames: List["Image.Image"]) -> str:  # type: ignore
-    """
-    프레임 단위로 전처리 앙상블 + 회전 시도 → 최고 스코어 결과 채택
-    """
     if not frames or not _paddle_ocr:
         return ""
-
     best_texts: List[str] = []
     for i, base_frame in enumerate(frames, 1):
         candidates: List[Tuple[str, float]] = []
-
-        rotations = [0]
-        if OCR_ROTATE_ALL:
-            rotations = [0, 90, 180, 270]
-
+        rotations = [0] if not OCR_ROTATE_ALL else [0, 90, 180, 270]
         for deg in rotations:
-            if deg != 0:
-                fr = base_frame.rotate(deg, expand=True)
-            else:
-                fr = base_frame
-
+            fr = base_frame.rotate(deg, expand=True) if deg else base_frame
             variants = _preprocess_variants_pil(fr) if OCR_USE_ENS else [fr]
             for v in variants:
                 txt, score = _paddle_ocr_once(v)
                 if txt:
                     candidates.append((txt, score))
-
         if candidates:
-            # 최고 점수 선택
             txt, _ = max(candidates, key=lambda x: x[1])
             best_texts.append(f"[frame {i}] {txt}" if len(frames) > 1 else txt)
+    return "\n\n".join([t for t in best_texts if t.strip()]).strip()
 
-    merged = "\n\n".join([t for t in best_texts if t.strip()]).strip()
-    return merged
+def _ocr_easy_frames(frames: List["Image.Image"]) -> str:  # type: ignore
+    if not (_easy_reader and frames):
+        return ""
+    parts: List[str] = []
+    for i, fr in enumerate(frames, 1):
+        res = _easy_reader.readtext(np.array(fr)) if False else None  # keep import-light path
+        try:
+            import numpy as np  # moved inside to avoid top import if not installed
+            res = _easy_reader.readtext(np.array(fr))  # type: ignore
+        except Exception:
+            res = []
+        lines = []
+        for (*_, txt, conf) in res:  # bbox, text, conf
+            if float(conf) >= OCR_MIN_CONF and (txt or "").strip():
+                lines.append(str(txt).strip())
+        txt = "\n".join(lines).strip()
+        if txt and len(txt) >= OCR_MIN_CHARS:
+            parts.append(f"[frame {i}] {txt}" if len(frames) > 1 else txt)
+    return "\n\n".join(parts).strip()
 
-# ── Tesseract 경로(폴백) ────────────────────────────────────
 def _ocr_tesseract_frames(frames: List["Image.Image"], lang: str) -> str:  # type: ignore
     if not (_TESS_AVAILABLE and frames):
         return ""
@@ -540,9 +530,7 @@ def _ocr_tesseract_frames(frames: List["Image.Image"], lang: str) -> str:  # typ
 def ocr_image_bytes(buf: bytes, lang: str = OCR_LANG) -> str:
     if not ENABLE_OCR:
         return ""
-
-    # 1) OpenCV 단일 쓰기 전처리(빠름) → 실패 시 GIF 포함 프레임 추출
-    pil_frames: List["Image.Image"] = []  # type: ignore
+    pil_frames: List["Image.Image"] = []
     if _CV2:
         with contextlib.suppress(Exception):
             pf = _preprocess_for_ocr_cv2(buf)
@@ -553,22 +541,22 @@ def ocr_image_bytes(buf: bytes, lang: str = OCR_LANG) -> str:
     if not pil_frames:
         return ""
 
-    # 2) 백엔드 시도: Paddle → 실패/부족하면 Tesseract 폴백
     text = ""
-    if OCR_BACKEND == "paddle" and _paddle_ocr:
-        text = _ocr_paddle_frames_ensemble(pil_frames)
-    if not text and _TESS_AVAILABLE:
-        text = _ocr_tesseract_frames(pil_frames, lang)
+    for backend in OCR_BACKENDS:
+        if backend == "paddle" and _paddle_ocr:
+            text = _ocr_paddle_frames_ensemble(pil_frames)
+        elif backend == "tesseract" and _TESS_AVAILABLE:
+            text = _ocr_tesseract_frames(pil_frames, lang)
+        elif backend == "easyocr" and _easy_reader:
+            text = _ocr_easy_frames(pil_frames)  # type: ignore
+        if text:
+            break
 
     text = (text or "").strip()
     if not text:
         return ""
-
-    # 3) 한글 후처리(띄어쓰기 결합 등)
     text = _post_process_korean(text)
-    if len(text) >= OCR_MIN_CHARS:
-        return text
-    return ""
+    return text if len(text) >= OCR_MIN_CHARS else ""
 
 # ────────────────────────────────────────────────────────────
 async def save_clean_outputs(
@@ -585,7 +573,6 @@ async def save_clean_outputs(
         return
     text_dir, img_dir, manifest_fp = paths_for_clean(category, slug, suffix)
 
-    # .md 저장 (+ 헤더)
     text_fp = text_dir / f"{slug}-{suffix}.md"
     header = f"# {title}\n\n> Source: {url}\n\n"
     md_body = header + (text or "")
@@ -593,7 +580,6 @@ async def save_clean_outputs(
     saved_imgs: List[str] = []
     saved_ocr_txts: List[str] = []
 
-    # 이미지 저장 (+ OCR)
     for i, iu in enumerate(img_urls, start=1):
         b = await fetch_image_bytes(session, iu)
         if not b:
@@ -607,7 +593,7 @@ async def save_clean_outputs(
         if ENABLE_OCR and ext.lower() in RASTER_EXTS:
             txt = await asyncio.to_thread(ocr_image_bytes, b, OCR_LANG)
             if txt:
-                ocr_fp = out.with_suffix(out.suffix + ".txt")  # img1.jpg.txt
+                ocr_fp = out.with_suffix(out.suffix + ".txt")
                 with contextlib.suppress(Exception):
                     ocr_fp.write_text(txt, encoding="utf-8")
                     saved_ocr_txts.append(str(ocr_fp))
@@ -632,21 +618,12 @@ async def save_clean_outputs(
         mf.write(json.dumps(rec, ensure_ascii=False) + "\n")
 
 # ────────────────────────────────────────────────────────────
-# 로컬 images 폴더 인제스트 (폴더 1개 = 문서 1개)
 def _iter_local_docs_flat(root: Path) -> List[Path]:
     if not root.exists():
         return []
     return [p for p in sorted(root.iterdir()) if p.is_dir()]
 
 def _load_local_map(root: Path) -> Dict[str, Dict]:
-    """
-    선택: images/_map.json 있으면 폴더별 카테고리/제목 매핑
-    예)
-    {
-      "센터연혁": {"category": "센터소개", "title": "센터 연혁"},
-      "조직도": {"category": "센터소개", "title": "조직도"}
-    }
-    """
     mp = root / "_map.json"
     if not mp.exists():
         return {}
@@ -655,13 +632,7 @@ def _load_local_map(root: Path) -> Dict[str, Dict]:
     return {}
 
 async def ingest_local_images(root: Path, default_category: str = "센터소개"):
-    """
-    images/<문서폴더>/*.png|jpg|gif ... → 한 문서로 인제스트 + OCR
-    - 카테고리: _map.json에 없으면 default_category 사용
-    - Source: local://images/<문서폴더>
-    """
     CLEAN_BASE.mkdir(parents=True, exist_ok=True)
-
     fmap = _load_local_map(root)
     doc_dirs = _iter_local_docs_flat(root)
     if not doc_dirs:
@@ -677,7 +648,6 @@ async def ingest_local_images(root: Path, default_category: str = "센터소개"
         suffix = "local-" + hashlib.md5(str(doc_dir).encode()).hexdigest()[:8]
         text_dir, img_dir, manifest_fp = paths_for_clean(category, slug, suffix)
 
-        # .md 본문(헤더)
         text_fp = text_dir / f"{slug}-{suffix}.md"
         source_url = f"local://images/{folder}"
         header = f"# {title}\n\n> Source: {source_url}\n\n"
@@ -686,7 +656,6 @@ async def ingest_local_images(root: Path, default_category: str = "센터소개"
         saved_imgs: List[str] = []
         saved_ocr_txts: List[str] = []
 
-        # 폴더 안의 이미지들만 (재귀 X)
         imgs = [p for p in sorted(doc_dir.iterdir()) if p.is_file() and p.suffix.lower() in IMG_EXTS]
         for i, in_fp in enumerate(imgs, start=1):
             ext = in_fp.suffix.lower()
@@ -696,7 +665,6 @@ async def ingest_local_images(root: Path, default_category: str = "센터소개"
                 shutil.copy2(str(in_fp), str(out_fp))
                 saved_imgs.append(str(out_fp))
 
-            # OCR (래스터 + GIF)
             if ENABLE_OCR and ext in RASTER_EXTS:
                 with contextlib.suppress(Exception):
                     b = in_fp.read_bytes()
@@ -756,7 +724,6 @@ async def crawl_internal_clean(category: str, seeds: List[str]):
 
             await save_clean_outputs(session, category, nu, title, slug, suffix, soup)
 
-            # 내부 링크 큐잉
             for a in soup.select("a[href]"):
                 href = (a.get("href") or "").split("#")[0].strip()
                 if not href: continue
@@ -796,17 +763,14 @@ async def ingest_all_locals():
 async def main():
     CLEAN_BASE.mkdir(parents=True, exist_ok=True)
 
-    # 1) 외부(1-hop)
     external_cats = ["instagram", "blog", "youtube", "band"]
     for cat in external_cats:
         await save_external_once_clean(cat, SEEDS[cat])
 
-    # 2) 내부(BFS)
     internal_cats = [k for k in SEEDS.keys() if k not in external_cats]
     for cat in internal_cats:
         await crawl_internal_clean(cat, SEEDS[cat])
 
-    # 3) 로컬 이미지 인제스트
     await ingest_all_locals()
 
 if __name__ == "__main__":

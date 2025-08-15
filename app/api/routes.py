@@ -1,37 +1,29 @@
-# api/routes.py
+# app/api/routes.py
 from fastapi import APIRouter
-from pydantic import BaseModel
-from ..rag.chatbot import ask_async
 from fastapi.responses import StreamingResponse
-import asyncio
-import re 
+from pydantic import BaseModel
+from typing import Optional
+from ..rag.chatbot import ask_async
 
 router = APIRouter()
 
-class Query(BaseModel):
+class AskBody(BaseModel):
     message: str
+    session_id: Optional[str] = None
 
-def chunk_text(text: str):
-    pattern = r'https?://\S+|\S+\s*'
-    for m in re.finditer(pattern, text):
-        yield m.group(0)
+async def _stream_answer(msg: str) -> StreamingResponse:
+    async def gen():
+        yield msg
+    # 프론트가 HTML을 그대로 렌더하므로 text/plain/UTF-8로 충분
+    return StreamingResponse(gen(), media_type="text/plain; charset=utf-8")
 
 @router.post("/chat")
-async def chat(query: Query):
-    # 모델에서 최종 답을 받아온 뒤 청크 단위로 흘려보냄
-    answer = await ask_async(query.message)
+async def chat(body: AskBody):
+    ans = await ask_async(body.message, body.session_id)
+    return await _stream_answer(ans)
 
-    async def stream():
-        for chunk in chunk_text(answer):
-            yield chunk
-            await asyncio.sleep(0.005)
-
-    return StreamingResponse(
-        stream(),
-        media_type="text/plain",
-        headers={
-            "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no",
-        },
-    )
-
+# 구버전 호환
+@router.post("/ask")
+async def ask(body: AskBody):
+    ans = await ask_async(body.message, body.session_id)
+    return await _stream_answer(ans)
