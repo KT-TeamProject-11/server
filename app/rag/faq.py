@@ -1,9 +1,9 @@
-# app/rag/faq.py
-from typing import List, Optional, Tuple
-from rapidfuzz import process, fuzz
+from __future__ import annotations
+from typing import List, Optional, Tuple, Dict
+import re
+from rapidfuzz import fuzz
 
-# FAQ 원문을 "그대로" 응답으로 사용합니다.
-# 각 항목은 유사 표현(qs)을 넉넉히 넣어 퍼지매칭 적중률을 높입니다.
+# === 1) 기존 FAQ 데이터 ===
 FAQ_ENTRIES = [
     {
         "qs": [
@@ -148,26 +148,103 @@ FAQ_ENTRIES = [
     },
 ]
 
-MIN_FAQ_SCORE = 85  # 퍼지 일치 임계값(필요 시 85~92 사이로 조정)
+# === 2) 정규화 ===
+_PUNCT = re.compile(r"[^\w\s]")
+_WS = re.compile(r"\s+")
+_ENDING = re.compile(r"(인가요|인가|이란|이야|예요|에요|요|\?)$")
 
-# 내부 플랫닝
-_ALL_QA: List[Tuple[str, str]] = []
+_SYNONYMS: List[Tuple[re.Pattern, str]] = [
+    (re.compile(r"이\s*메일|e[-\s]*mail", re.IGNORECASE), "메일"),
+    (re.compile(r"연락\s*처|전화\s*번호", re.IGNORECASE), "전화"),
+    (re.compile(r"오시는\s*길|약도", re.IGNORECASE), "오시는길"),
+    (re.compile(r"홈\s*페이지|누리집|사이트", re.IGNORECASE), "홈페이지"),
+    (re.compile(r"도시재생\s*선도\s*사업", re.IGNORECASE), "도시재생선도사업"),
+]
+
+def _normalize(s: str) -> str:
+    if not s:
+        return ""
+    t = s.strip().lower()
+    t = _PUNCT.sub(" ", t)
+    for pat, repl in _SYNONYMS:
+        t = pat.sub(repl, t)
+    t = _ENDING.sub("", t)
+    t = _WS.sub(" ", t)
+    return t.strip()
+
+# === 3) intent 힌트 ===
+_CONTACT_PAT  = re.compile(r"(연락|문의|전화|번호|메일|이메일)", re.IGNORECASE)
+_COST_PAT     = re.compile(r"(비용|가격|요금|수강료|참가비|투어비)", re.IGNORECASE)
+_SCHEDULE_PAT = re.compile(r"(일정|날짜|시간|기간|운영\s*시간|업무\s*시간)", re.IGNORECASE)
+_ADDRESS_PAT  = re.compile(r"(주소|위치|오시는길|지도|약도|층|동)", re.IGNORECASE)
+
+def _guess_intent_hint(texts: List[str], answer: str) -> str:
+    blob = " ".join(texts + [answer or ""])
+    if _CONTACT_PAT.search(blob):  return "contact"
+    if _COST_PAT.search(blob):     return "cost"
+    if _SCHEDULE_PAT.search(blob): return "schedule"
+    if _ADDRESS_PAT.search(blob):  return "address"
+    return "info"
+
+# === 4) 인덱스 ===
+_CANDS: List[Dict[str, str]] = []
 for item in FAQ_ENTRIES:
+    ans = str(item["answer"])
+    intent_hint = _guess_intent_hint(item.get("qs", []), ans)
     for q in item["qs"]:
-        _ALL_QA.append((q, item["answer"]))
+        _CANDS.append({
+            "q_raw": q,
+            "q_norm": _normalize(q),
+            "answer": ans,
+            "intent_hint": intent_hint,
+        })
 
-def find_faq_answer(query: str) -> Optional[str]:
-    q = (query or "").strip()
-    if not q:
+# === 5) 매칭 ===
+def _score(a: str, b: str) -> int:
+    ts = fuzz.token_set_ratio(a, b)
+    pr = fuzz.partial_ratio(a, b)
+    return int(0.6 * ts + 0.4 * pr)
+
+def find_faq_answer(
+    query: str,
+    hard_threshold: int = 90,
+    soft_threshold: int = 85,
+    preferred_intent: Optional[str] = None,
+    blocked_intents: Optional[List[str]] = None,
+) -> Optional[str]:
+    qn = _normalize(query or "")
+    if not qn:
         return None
-    cand, score, idx = process.extractOne(
-        q,
-        [qq for qq, _ in _ALL_QA],
-        scorer=fuzz.WRatio
-    )
-    if score >= MIN_FAQ_SCORE:
-        # 동일 인덱스의 답변 반환
-        for qq, aa in _ALL_QA:
-            if qq == cand:
-                return aa
+
+    pool = list(_CANDS)
+    if preferred_intent:
+        filtered = [c for c in pool if c.get("intent_hint") == preferred_intent]
+        if filtered:
+            pool = filtered
+
+    if blocked_intents:
+        blocked = set(blocked_intents)
+        pool = [c for c in pool if c.get("intent_hint") not in blocked]
+
+    if not pool:
+        return None
+
+    for c in pool:
+        cn = c["q_norm"]
+        if cn and (cn in qn or qn in cn):
+            return c["answer"]
+
+    best: Optional[Dict[str, str]] = None
+    best_score = -1
+    for c in pool:
+        s = _score(qn, c["q_norm"])
+        if s > best_score:
+            best_score = s
+            best = c
+
+    if best and best_score >= hard_threshold:
+        return best["answer"]
+    if best and best_score >= soft_threshold:
+        return best["answer"]
+
     return None

@@ -14,6 +14,10 @@ venv/
 app/data/index.faiss/
 app/data/index.faiss/*
 
+
+app/data/*
+app/data
+
 .DS_Store
 
 *.log
