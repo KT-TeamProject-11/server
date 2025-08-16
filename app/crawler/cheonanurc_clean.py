@@ -10,7 +10,11 @@
 개선점:
 - PaddleOCR 기반 한국어 강화 + 전처리 앙상블 + 회전 시도 + 한글 띄어쓰기 보정
 - Tesseract/EasyOCR(선택) 폴백
+- GIF 프레임/투명 배경/저대비 대응 강화
+- '오시는길' 유형 표(위치/Tel/Fax/이메일) 구조화 추출 → manifest.contacts 및 MD 하단 요약 삽입
 """
+
+from __future__ import annotations
 
 import os
 import re
@@ -303,7 +307,91 @@ def paths_for_clean(category: str, slug: str, suffix: str):
     return text_dir, img_dir, manifest_fp
 
 # ────────────────────────────────────────────────────────────
-# OCR 유틸 - 전처리/후처리/앙상블
+# 연락처 표 파서
+_CONTACT_LABELS = {
+    "위치": ("address",),
+    "주소": ("address",),
+    "tel": ("tel", "phone"),
+    "전화": ("tel", "phone"),
+    "fax": ("fax",),
+    "이메일": ("email","메일"),
+    "email": ("email","메일"),
+}
+
+def _clean_phone(s: str) -> str:
+    s = re.sub(r"[^\d\-~]", "", s)
+    s = re.sub(r"-{2,}", "-", s)
+    return s.strip("- ")
+
+def _html_to_markdown(tag: BeautifulSoup) -> str:
+    clone = BeautifulSoup(str(tag), "html.parser")
+    return html_to_markdown(clone)
+
+def _extract_contact_table(soup: BeautifulSoup) -> Optional[Dict[str, List[str]]]:
+    """
+    '오시는길' 유형 테이블에서 위치/Tel/Fax/이메일 추출
+    """
+    tables = soup.find_all("table")
+    if not tables:
+        return None
+
+    out = {"address": [], "tel": [], "fax": [], "email": []}
+    def put(k: str, v: str):
+        v = (v or "").strip()
+        if not v: return
+        if k == "tel":
+            v = _clean_phone(v)
+        if v and v not in out[k]:
+            out[k].append(v)
+
+    for tbl in tables:
+        # th-td 구조 우선
+        for tr in tbl.find_all("tr"):
+            th = tr.find("th")
+            tds = tr.find_all("td")
+            if not th or not tds:
+                continue
+            label = (th.get_text(" ", strip=True) or "").lower()
+            val = " ".join(td.get_text(" ", strip=True) for td in tds)
+            for key, aliases in _CONTACT_LABELS.items():
+                if key in label:
+                    if "address" in aliases:
+                        put("address", val)
+                    elif "phone" in aliases or "tel" in aliases:
+                        put("tel", val)
+                    elif "fax" in aliases:
+                        put("fax", val)
+                    elif "email" in aliases:
+                        mail = tr.select_one("a[href^=mailto]")
+                        if mail and mail.get_text(strip=True):
+                            put("email", mail.get_text(strip=True))
+                        else:
+                            put("email", val)
+        # 라벨:값 형태 보조
+        text_lines = _html_to_markdown(tbl).splitlines()
+        for ln in text_lines:
+            m = re.match(r"\s*(위치|주소|Tel|전화|Fax|이메일|Email)\s*[:：]\s*(.+)", ln, re.IGNORECASE)
+            if not m:
+                continue
+            label = m.group(1).lower()
+            val = m.group(2).strip()
+            if re.search(r"(지도|kakao|카카오)", val, re.IGNORECASE):
+                continue
+            if "위치" in label or "주소" in label:
+                put("address", val)
+            elif "tel" in label or "전화" in label:
+                put("tel", val)
+            elif "fax" in label:
+                put("fax", val)
+            elif "이메일" in label or "email" in label:
+                put("email", val)
+
+    if any(out[k] for k in out):
+        return out
+    return None
+
+# ────────────────────────────────────────────────────────────
+# OCR 유틸 - 전처리/후처리/앙상블 (투명/GIF/저대비 개선 포함)
 
 def _cv2_from_pil(img: "Image.Image"):
     import numpy as np
@@ -320,44 +408,52 @@ def _resize_scale_up(img: "Image.Image") -> "Image.Image":
     nw, nh = int(w * OCR_SCALE_UP), int(h * OCR_SCALE_UP)
     return img.resize((nw, nh))
 
+def _flatten_alpha(img: "Image.Image", bg: str = "white") -> "Image.Image":
+    """RGBA를 불투명으로 합성"""
+    if img.mode in ("RGBA", "LA"):
+        bg_color = (255,255,255) if bg == "white" else (0,0,0)
+        base = Image.new("RGB", img.size, bg_color)
+        base.paste(img.convert("RGBA"), mask=img.split()[-1])
+        return base
+    return img.convert("RGB")
+
 def _preprocess_variants_pil(img: "Image.Image") -> List["Image.Image"]:
     variants: List["Image.Image"] = []
     base = _resize_scale_up(img)
     variants.append(base)
 
+    # 저대비 → CLAHE/언샤프/이진화/역상
     if not _CV2:
         if ImageOps:
             gray = ImageOps.grayscale(base)
             variants.append(gray)
+            # 역상
+            inv = ImageOps.invert(gray.convert("L")).convert("RGB")
+            variants.append(inv)
         if ImageFilter:
-            sharp = base.filter(ImageFilter.UnsharpMask(radius=2, percent=150, threshold=3))
+            sharp = base.filter(ImageFilter.UnsharpMask(radius=2, percent=160, threshold=2))
             variants.append(sharp)
         return variants
 
     bgr = _cv2_from_pil(base)
     lab = cv2.cvtColor(bgr, cv2.COLOR_BGR2LAB)
     l, a, b = cv2.split(lab)
-    clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8,8))
+    clahe = cv2.createCLAHE(clipLimit=3.5, tileGridSize=(8,8))
     l2 = clahe.apply(l)
     lab2 = cv2.merge([l2, a, b])
     bgr_clahe = cv2.cvtColor(lab2, cv2.COLOR_LAB2BGR)
     variants.append(_pil_from_cv2(bgr_clahe))
 
-    gauss = cv2.GaussianBlur(bgr, (0,0), 1.0)
-    unsharp = cv2.addWeighted(bgr, 1.5, gauss, -0.5, 0)
+    gauss = cv2.GaussianBlur(bgr, (0,0), 1.2)
+    unsharp = cv2.addWeighted(bgr, 1.8, gauss, -0.8, 0)
     variants.append(_pil_from_cv2(unsharp))
 
     gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
     bin1 = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-                                 cv2.THRESH_BINARY, 35, 11)
-    bin1 = cv2.medianBlur(bin1, 3)
+                                 cv2.THRESH_BINARY, 31, 9)
     variants.append(Image.fromarray(bin1))
-
-    alpha, beta = 1.2, 5
-    highc = cv2.convertScaleAbs(bgr, alpha=alpha, beta=beta)
-    gauss2 = cv2.GaussianBlur(highc, (0,0), 0.8)
-    sharp2 = cv2.addWeighted(highc, 1.4, gauss2, -0.4, 0)
-    variants.append(_pil_from_cv2(sharp2))
+    bin_inv = cv2.bitwise_not(bin1)
+    variants.append(Image.fromarray(bin_inv))
 
     return variants
 
@@ -384,12 +480,15 @@ def _pil_from_bytes(buf: bytes) -> Optional["Image.Image"]:  # type: ignore
     if Image is None:
         return None
     with contextlib.suppress(Exception):
-        return Image.open(io.BytesIO(buf))
+        im = Image.open(io.BytesIO(buf))
+        return im
     return None
 
 def _preprocess_for_ocr_pil(img: "Image.Image") -> "Image.Image":  # type: ignore
     if ImageOps is None:
         return img
+    if img.mode in ("RGBA","LA"):
+        img = _flatten_alpha(img)
     gray = ImageOps.grayscale(img)  # type: ignore
     max_side = 1600
     w, h = gray.size
@@ -411,16 +510,16 @@ def _extract_pil_frames(buf: bytes) -> List["Image.Image"]:  # type: ignore
             for fr in ImageSequence.Iterator(im):  # type: ignore
                 if count >= MAX_GIF_FRAMES:
                     break
-                fr = fr.convert("RGB")
+                fr = _flatten_alpha(fr)
                 if prev is not None and ImageChops is not None:
-                    diff = ImageChops.difference(prev, fr)  # type: ignore
+                    diff = ImageChops.difference(prev.convert("RGB"), fr.convert("RGB"))  # type: ignore
                     if diff.getbbox() is None:
                         continue
                 frames.append(fr)
                 prev = fr
                 count += 1
     else:
-        frames.append(im.convert("RGB"))
+        frames.append(_flatten_alpha(im))
 
     return [_preprocess_for_ocr_pil(f) for f in frames]
 
@@ -430,7 +529,7 @@ def _merge_hangul_separated_words(text: str) -> str:
     def _merge_block(m):
         return re.sub(r"\s+", "", m.group(0))
     pattern = rf"((?:{_HANGUL_BLOCK}\s+){{1,}}{_HANGUL_BLOCK})"
-    return re.sub(pattern, _merge_hangul_separated_words_inner, text) if False else re.sub(pattern, _merge_block, text)
+    return re.sub(pattern, _merge_block, text)
 
 def _post_process_korean(text: str) -> str:
     t = text
@@ -499,9 +598,8 @@ def _ocr_easy_frames(frames: List["Image.Image"]) -> str:  # type: ignore
         return ""
     parts: List[str] = []
     for i, fr in enumerate(frames, 1):
-        res = _easy_reader.readtext(np.array(fr)) if False else None  # keep import-light path
         try:
-            import numpy as np  # moved inside to avoid top import if not installed
+            import numpy as np
             res = _easy_reader.readtext(np.array(fr))  # type: ignore
         except Exception:
             res = []
@@ -571,11 +669,28 @@ async def save_clean_outputs(
     text, img_urls = extract_text_and_images(soup, url)
     if not text and not img_urls:
         return
-    text_dir, img_dir, manifest_fp = paths_for_clean(category, slug, suffix)
 
+    # ★ 연락처 표 구조화 추출
+    contacts = _extract_contact_table(soup) or {}
+
+    text_dir, img_dir, manifest_fp = paths_for_clean(category, slug, suffix)
     text_fp = text_dir / f"{slug}-{suffix}.md"
     header = f"# {title}\n\n> Source: {url}\n\n"
     md_body = header + (text or "")
+
+    # 연락처 요약을 본문 하단에 붙임(있을 때만)
+    if contacts:
+        def bullet(key, label):
+            vals = contacts.get(key) or []
+            if not vals:
+                return ""
+            return f"- **{label}**: " + " / ".join(vals) + "\n"
+        md_body += "\n\n## 연락처 요약\n\n" + \
+                   bullet("address", "주소") + \
+                   bullet("tel", "Tel") + \
+                   bullet("fax", "Fax") + \
+                   bullet("email", "이메일")
+
     ocr_summary_blocks: List[str] = []
     saved_imgs: List[str] = []
     saved_ocr_txts: List[str] = []
@@ -613,6 +728,8 @@ async def save_clean_outputs(
         "text_path": str(text_fp),
         "images": saved_imgs,
         "image_ocr_texts": saved_ocr_txts,
+        # ★ manifest에 구조화 연락처 저장
+        "contacts": contacts,
     }
     with open(manifest_fp, "a", encoding="utf-8") as mf:
         mf.write(json.dumps(rec, ensure_ascii=False) + "\n")
