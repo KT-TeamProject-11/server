@@ -1,6 +1,7 @@
 # app/config.py
 import os
 from dotenv import load_dotenv
+from pathlib import Path
 
 load_dotenv()
 
@@ -54,6 +55,12 @@ RETRIEVER_TOP_K  = RETRIEVER_K
 RETRIEVER_TOPK   = RETRIEVER_K
 INDEX_PATH       = INDEX_DIR
 FAISS_INDEX_PATH = INDEX_DIR
+CLEAN_DIR = _getenv("CLEAN_DIR", "app/data/clean")
+
+STATIC_URL_PREFIX = "/static"
+STATIC_DIR = str((Path(__file__).resolve().parent / "static").resolve())
+CENTER_IMG_SUBDIR = ""       
+PUBLIC_BASE_URL = "http://localhost:8555"   
 
 def validate_runtime_env():
     missing = []
