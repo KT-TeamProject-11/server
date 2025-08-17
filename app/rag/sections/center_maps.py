@@ -8,18 +8,20 @@ try:
 except Exception:
     STATIC_URL_PREFIX, CENTER_IMG_SUBDIR, PUBLIC_BASE_URL = "/static", "", ""
 
-def _img_url(filename: str) -> str:
-    base = STATIC_URL_PREFIX.rstrip("/")
-    sub  = ("/" + CENTER_IMG_SUBDIR.strip("/")) if CENTER_IMG_SUBDIR else ""
-    prefix = (PUBLIC_BASE_URL.rstrip("/") + base) if PUBLIC_BASE_URL else base
-    return f"{prefix}{sub}/{filename}"  
-
-
+# business의 Data URI 우선 로더 재사용
+try:
+    from app.rag.sections.business import _img_src
+except Exception:
+    def _img_src(filename: str, prefer_data_uri: bool = True) -> str:
+        base = (STATIC_URL_PREFIX or "/static").rstrip("/")
+        sub  = ("/" + CENTER_IMG_SUBDIR.strip("/")) if CENTER_IMG_SUBDIR else ""
+        prefix = (PUBLIC_BASE_URL.rstrip("/") + base) if PUBLIC_BASE_URL else base
+        return f"{prefix}{sub}/{filename}"
 
 CENTER_MAPS: Dict[str, Dict] = {
     "cheonan": {
         "title": "천안시 도시재생지원센터 오시는 길",
-        "img": _img_url("center-cheonan.png"),
+        "img": _img_src("center-cheonan.png", prefer_data_uri=True),
         "aliases": ["천안시 도시재생지원센터","천안시도시재생지원센터","본센터","센터 본원","두드림센터"],
         "address": "충남 천안시 동남구 은행길 15, 두드림센터 5층",
         "tel": "041-417-4062",
@@ -29,7 +31,7 @@ CENTER_MAPS: Dict[str, Dict] = {
     },
     "bongmyeong": {
         "title": "봉명지구 도시재생현장지원센터 오시는 길",
-        "img": _img_url("center-bongmyeong.png"),
+        "img": _img_src("center-bongmyeong.png", prefer_data_uri=True),
         "aliases": ["봉명지구","봉명 현장지원센터","봉명센터","봉명동","봉정로"],
         "address": "충남 천안시 동남구 봉정로 39, 봉명동 행정복지센터 3층",
         "tel": "041-577-3992",
@@ -39,7 +41,7 @@ CENTER_MAPS: Dict[str, Dict] = {
     },
     "oryong": {
         "title": "오룡지구 도시재생현장지원센터 오시는 길",
-        "img": _img_url("center-oryong.png"),
+        "img": _img_src("center-oryong.png", prefer_data_uri=True),
         "aliases": ["오룡지구","오룡 현장지원센터","오룡센터","신부동"],
         "address": "충남 천안시 동남구 신부7길 14, 1층",
         "tel": "041-566-4526",
@@ -80,7 +82,6 @@ def render_map_html(items: List[Dict]) -> str:
     blocks = []
     for m in items:
         head = f"<h3>{html.escape(m['title'])}</h3>"
-        # 주의: 일부 렌더러가 onerror 속성을 막을 수 있어 단순 <img>만 둡니다.
         img  = (
             f'<div style="margin:8px 0 6px">'
             f'<img src="{m["img"]}" alt="{html.escape(m["title"])}" '
@@ -94,6 +95,5 @@ def render_map_html(items: List[Dict]) -> str:
             _li_if("이메일", m.get("email", "")),
         ])
         ul = f"<ul>{lis}</ul>" if lis else ""
-        # 🔥 카드 내부의 '자세히' 링크는 제거합니다 (상단 url.py 링크 하나만 노출)
         blocks.append(head + img + ul)
     return "<div>" + "<hr>".join(blocks) + "</div>"

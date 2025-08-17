@@ -1,40 +1,109 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
-import re
-from typing import Dict, List, Tuple
 
-# 정적 경로: 무조건 /static 사용 (config 있으면 따라가고, 없으면 /static 유지)
-try:
-    from app.config import STATIC_URL_PREFIX, PUBLIC_BASE_URL
-except Exception:
-    STATIC_URL_PREFIX, PUBLIC_BASE_URL = "/static", ""
+import base64, html, mimetypes, os, re, unicodedata
+from pathlib import Path
+from typing import Dict, List, Tuple, Optional
 
-def _img_url(filename: str) -> str:
+from app.config import STATIC_URL_PREFIX, PUBLIC_BASE_URL, CENTER_IMG_SUBDIR, STATIC_DIR
+
+# ─────────────────────────────────────────────────────────
+# 파일/이미지 유틸
+def _static_dir() -> Path:
+    """
+    정적 이미지 디렉터리 탐색 (우선순위)
+    1) app.config.STATIC_DIR [+ CENTER_IMG_SUBDIR]
+    2) app/rag/static   (이 모듈 기준)
+    3) app/static       (프로젝트 루트 기준)
+    """
+    candidates: List[Path] = []
+    try:
+        d = Path(STATIC_DIR)
+        if CENTER_IMG_SUBDIR:
+            d = d / CENTER_IMG_SUBDIR.strip("/")
+        candidates.append(d)
+    except Exception:
+        pass
+
+    here = Path(__file__).resolve()
+    candidates.append(here.parent.parent / "static")   # app/rag/static
+    candidates.append(here.parents[2] / "static")      # app/static
+
+    for d in candidates:
+        if d.exists():
+            return d
+    return candidates[0] if candidates else Path("static")
+
+def _find_file_path(filename: str) -> Optional[str]:
+    """맥OS 한글(NFD/NFC) 문제를 우회: 정규화/대소문자 무시/공백무시 매칭."""
+    base = _static_dir()
+    target = unicodedata.normalize("NFC", filename)
+    p = base / target
+    if p.exists():
+        return str(p)
+
+    if not base.exists():
+        return None
+
+    norm = re.sub(r"\s+", "", target).lower()
+    with os.scandir(base) as it:
+        for e in it:
+            name = unicodedata.normalize("NFC", e.name)
+            if re.sub(r"\s+", "", name).lower() == norm:
+                return str(Path(base) / e.name)
+    return None
+
+def _to_data_uri(filepath: str) -> str:
+    mime = mimetypes.guess_type(filepath)[0] or "image/jpeg"
+    with open(filepath, "rb") as f:
+        b64 = base64.b64encode(f.read()).decode("ascii")
+    return f"data:{mime};base64,{b64}"
+
+def _img_src(filename: str, prefer_data_uri: bool = True) -> str:
+    if prefer_data_uri:
+        fp = _find_file_path(filename)
+        if fp and os.path.exists(fp):
+            try:
+                return _to_data_uri(fp)
+            except Exception:
+                pass
     base = (STATIC_URL_PREFIX or "/static").rstrip("/")
+    sub  = ("/" + CENTER_IMG_SUBDIR.strip("/")) if CENTER_IMG_SUBDIR else ""
     prefix = (PUBLIC_BASE_URL.rstrip("/") + base) if PUBLIC_BASE_URL else base
-    return f"{prefix}/{filename}"
+    return f"{prefix}{sub}/{filename}"
 
-# 질문에 필드가 언급되면 강조
+def _img_tag(filename: str, alt: str) -> str:
+    src = _img_src(filename, prefer_data_uri=True)
+    return (f"<img src='{src}' alt='{html.escape(alt)}' "
+            "style='max-width:100%;border-radius:12px;box-shadow:0 2px 8px rgba(0,0,0,.08);display:block;'>")
+
+# ─────────────────────────────────────────────────────────
+# 질의 의도: 사업 전체/단답/구상도
 FIELD_HINTS = {
+    "name":   re.compile(r"(사업\s*명|사업명|명칭|이름)", re.IGNORECASE),
     "type":   re.compile(r"(유형|타입|종류)", re.IGNORECASE),
-    "area":   re.compile(r"(사업\s*지[역구]|어디|위치)", re.IGNORECASE),
-    "period": re.compile(r"(기간|언제|연도|년도)", re.IGNORECASE),
-    "budget": re.compile(r"(사업비|예산|총\s*사업비|돈|비용)", re.IGNORECASE),
+    "area":   re.compile(r"(사업\s*지[역구]|어디|위치|대상지)", re.IGNORECASE),
+    "period": re.compile(r"(기간|연도|년도|언제부터|언제까지)", re.IGNORECASE),
+    "budget": re.compile(r"(사업비|예산|총\s*사업비|비용|돈)", re.IGNORECASE),
     "goals":  re.compile(r"(목표|지향|비전)", re.IGNORECASE),
-    "main":   re.compile(r"(주요\s*사업|무엇을|무슨\s*사업|내용)", re.IGNORECASE),
+    "main":   re.compile(r"(주요\s*사업|세부\s*사업|내용|무슨\s*사업)", re.IGNORECASE),
+    "plan":   re.compile(r"(구상도|총괄도|마스터\s*플[랜]|계획도|조감도|그림|이미지|사진)", re.IGNORECASE),
 }
-def want_fields(q: str) -> List[str]:
+
+def _want_fields(q: str) -> List[str]:
     out: List[str] = []
     for k, pat in FIELD_HINTS.items():
         if pat.search(q or ""):
             out.append(k)
     return out
 
-# 사업 데이터 (이미지는 전부 /static)
+# ─────────────────────────────────────────────────────────
+# 사업 데이터 — 이미지 필드는 "파일명"만 보관(확장자 포함)
 BUSINESS: Dict[str, Dict] = {
     "overview": {
         "title": "천안시 도시재생사업 총괄도",
-        "img": _img_url("천안시 도시재생사업 총괄도.jpg"),
+        "name":  "천안시 도시재생사업 총괄도",
+        "img": "천안시 도시재생사업 총괄도.jpg",
         "aliases": ["총괄도","종합구상도","한눈에","전체","모두","지도","계획","사업 전체"],
         "type": "-",
         "area": "천안시 전역(표시 구역 참조)",
@@ -46,7 +115,8 @@ BUSINESS: Dict[str, Dict] = {
     },
     "cheonan-station": {
         "title": "천안역세권 도시재생사업",
-        "img": _img_url("천안역세권 도시재생사업.jpg"),
+        "name":  "천안역세권 도시재생사업",
+        "img": "천안역세권 도시재생사업.jpg",
         "aliases": ["천안역세권","역세권","스테이션 캠퍼스","캠퍼스타운","중심시가지형"],
         "type": "중심시가지형",
         "area": "천안시 서북구 와촌동 106-17 일원",
@@ -58,7 +128,8 @@ BUSINESS: Dict[str, Dict] = {
     },
     "cheonan-innovation": {
         "title": "천안역세권 혁신지구 도시재생사업",
-        "img": _img_url("천안역세권 혁신지구 도시재생사업.jpg"),
+        "name":  "천안역세권 혁신지구 도시재생사업",
+        "img": "천안역세권 혁신지구 도시재생사업.jpg",
         "aliases": ["혁신지구","역세권 혁신지구","혁신","혁신재생"],
         "type": "혁신지구 재생사업",
         "area": "천안시 서북구 와촌동 106-68 일원",
@@ -70,7 +141,8 @@ BUSINESS: Dict[str, Dict] = {
     },
     "namsan": {
         "title": "남산지구 도시재생 뉴딜사업",
-        "img": _img_url("남산지구 도시재생 뉴딜사업.jpg"),
+        "name":  "남산지구 도시재생 뉴딜사업",
+        "img": "남산지구 도시재생 뉴딜사업.jpg",
         "aliases": ["남산지구","사직동","고령친화"],
         "type": "일반근린형",
         "area": "천안시 동남구 사직동 284-3 번지 일원",
@@ -82,7 +154,8 @@ BUSINESS: Dict[str, Dict] = {
     },
     "bongmyeong": {
         "title": "봉명지구 도시재생뉴딜사업",
-        "img": _img_url("봉명지구 도시재생뉴딜사업.jpg"),
+        "name":  "봉명지구 도시재생뉴딜사업",
+        "img": "봉명지구 도시재생뉴딜사업.jpg",
         "aliases": ["봉명지구","통합돌봄마을","봉명"],
         "type": "일반근린형",
         "area": "천안시 동남구 봉명동 39-1 일원",
@@ -94,7 +167,8 @@ BUSINESS: Dict[str, Dict] = {
     },
     "oryong-ritz": {
         "title": "오룡지구 민·관 협력형 도시재생 리츠사업",
-        "img": _img_url("오룡지구 민-관 협력형 도시재생 리츠사업.jpg"),
+        "name":  "오룡지구 민·관 협력형 도시재생 리츠사업",
+        "img": "오룡지구 민-관 협력형 도시재생 리츠사업.jpg",
         "aliases": ["오룡 리츠","오룡경기장","민관협력형"],
         "type": "민관협력형 리츠사업",
         "area": "천안시 동남구 원성동 31-70 일원",
@@ -106,7 +180,8 @@ BUSINESS: Dict[str, Dict] = {
     },
     "oryong": {
         "title": "오룡지구 도시재생사업",
-        "img": _img_url("오룡지구도시재생사업.jpg"),
+        "name":  "오룡지구 도시재생사업",
+        "img": "오룡지구도시재생사업.png",
         "aliases": ["오룡지구","로코노미","골목 벤처밸리","원성동 31-25"],
         "type": "특화재생형",
         "area": "천안시 동남구 원성동 31-25 일원",
@@ -118,7 +193,8 @@ BUSINESS: Dict[str, Dict] = {
     },
     "wonseong2": {
         "title": "원성2지구 뉴·빌리지사업",
-        "img": _img_url("원성2지구 뉴-빌리지사업.jpg"),
+        "name":  "원성2지구 뉴·빌리지사업",
+        "img": "원성2지구 뉴-빌리지사업.png",
         "aliases": ["원성2지구","뉴빌리지","N분 생활권","원성2"],
         "type": "뉴·빌리지 사업",
         "area": "천안시 동남구 원성동 635 일원",
@@ -130,6 +206,8 @@ BUSINESS: Dict[str, Dict] = {
     },
 }
 
+# ─────────────────────────────────────────────────────────
+# 키 추정
 def _score_hit(q: str, meta: Dict) -> int:
     ql = (q or "").lower()
     s = 0
@@ -151,6 +229,71 @@ def _guess_keys(q: str) -> List[str]:
     hits.sort(key=lambda x: x[1], reverse=True)
     return [k for k, _ in hits]
 
-def find_business_items(q: str) -> List[Dict]:
+# 외부에서 사용: 사업성 질의인지?
+_BIZ_ANY_HINT = re.compile(r"(사업|구상도|총괄도|마스터\s*플[랜]|조감도|계획도)", re.IGNORECASE)
+def is_business_query(q: str) -> bool:
+    if not q:
+        return False
+    if _BIZ_ANY_HINT.search(q):
+        return True
+    ql = q.lower()
+    for meta in BUSINESS.values():
+        if any(a.lower() in ql for a in meta.get("aliases", [])):
+            return True
+    return False
+
+# ─────────────────────────────────────────────────────────
+# 렌더링
+def answer_business(q: str) -> Optional[str]:
     keys = _guess_keys(q)
-    return [BUSINESS[k] for k in keys if k in BUSINESS]
+    items = [BUSINESS[k] for k in keys if k in BUSINESS]
+    if not items:
+        return None
+
+    item = items[0]
+    wants = _want_fields(q)
+
+    # ① 단답(필드 지정)
+    if wants:
+        if len(wants) == 1 and wants[0] == "plan":
+            title = f"{item.get('title','')} 구상도".strip()
+            imgfile = item.get("img")
+            if not imgfile:
+                return "<b>구상도</b>: 없음"
+            return "<div>" + \
+                   f"<div style='font-weight:700;font-size:16px;margin:4px 0 8px'>{html.escape(title)}</div>" + \
+                   _img_tag(imgfile, title) + \
+                   "</div>"
+
+        label_map = {"name":"사업명","type":"유형","area":"사업지역","period":"사업기간","budget":"사업비"}
+        rows: List[str] = []
+        for w in wants:
+            if w in ("goals","main"):
+                key_label = "사업목표" if w == "goals" else "주요사업"
+                vals = item.get(w, []) or []
+                rows.append(f"• <b>{key_label}</b>: {html.escape(', '.join(vals) or '-')}")
+            elif w == "plan":
+                imgfile = item.get("img")
+                rows.append("<div style='margin-top:8px'><b>구상도</b></div>" + (_img_tag(imgfile, item.get('title','')) if imgfile else "없음"))
+            else:
+                rows.append(f"• <b>{label_map.get(w,w)}</b>: {html.escape(item.get(w,'-'))}")
+        return "<div>" + "<br>".join(rows) + "</div>"
+
+    # ② 전체 카드
+    head = f"<div style='font-weight:700;font-size:18px;margin:4px 0 10px'>{html.escape(item['title'])}</div>"
+    img_html = _img_tag(item["img"], item["title"]) if item.get("img") else ""
+    rows = [
+        f"• <b>사업명</b>: {html.escape(item.get('name','-'))}",
+        f"• <b>유형</b>: {html.escape(item.get('type','-'))}",
+        f"• <b>사업지역</b>: {html.escape(item.get('area','-'))}",
+        f"• <b>사업기간</b>: {html.escape(item.get('period','-'))}",
+        f"• <b>사업비</b>: {html.escape(item.get('budget','-'))}",
+    ]
+    if item.get("goals"):
+        rows.append("<div style='margin-top:6px'><b>사업목표</b></div><ul>" +
+                    "".join(f"<li>{html.escape(x)}</li>" for x in item["goals"]) + "</ul>")
+    if item.get("main"):
+        rows.append("<div style='margin-top:6px'><b>주요사업</b></div><ul>" +
+                    "".join(f"<li>{html.escape(x)}</li>" for x in item["main"]) + "</ul>")
+
+    return "<div>" + head + img_html + "<br>".join(rows) + "</div>"
