@@ -436,7 +436,15 @@ async def ask_async(question: str, session_id: Optional[str] = None) -> str:
     if cached := await _get_cached(cache_key):
         return _to_html(cached)
         
-    # 0) URL 라우터 — 우선 키워드일 때는 FAQ보다 먼저 처리 (아카이브, 투어, 커뮤니티, 도시재생+ 등)
+
+    # 0) FAQ(강)
+    faq_exact = find_faq_answer(q, hard_threshold=100, soft_threshold=100)
+    if faq_exact:
+        asyncio.create_task(_set_cached(cache_key, faq_exact))
+        await _save_state(session_id, {**state, "last_intent": "faq_strong"})
+        return _to_html(faq_exact)
+    
+    # 1) URL 라우터 — 우선 키워드일 때는 FAQ보다 먼저 처리 (아카이브, 투어, 커뮤니티, 도시재생+ 등)
     if _should_prioritize_url(q):
         hit0 = find_url_answer(q)
         if hit0:
@@ -445,12 +453,6 @@ async def ask_async(question: str, session_id: Optional[str] = None) -> str:
             await _save_state(session_id, {**state, "last_intent": "url_router_priority"})
             return _to_html(html_out0)
 
-    # 1) FAQ(강)
-    faq_exact = find_faq_answer(q, hard_threshold=100, soft_threshold=100)
-    if faq_exact:
-        asyncio.create_task(_set_cached(cache_key, faq_exact))
-        await _save_state(session_id, {**state, "last_intent": "faq_strong"})
-        return _to_html(faq_exact)
 
     # 2) 센터 오시는길(지도) / 사업소개(정적)
     ans_dir = answer_directions(q)

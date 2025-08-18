@@ -276,6 +276,9 @@ ENTRIES: List[UrlEntry] = [
     UrlEntry("도시재생플러스 도시재생투어 전문코스3","도시재생+ > 도시재생투어 > 전문코스3","천안 도시재생 주요 지구를 중심으로 구체적인 사례를 둘러보는 전문코스 3 입니다.",
              [LinkItem("https://www.cheonanurc.or.kr/100","전문코스3")],
              aliases=["전문코스 3","전문 코스 3","코스3 (전문)","투어 전문코스3"], page_ids=["100"]),
+    UrlEntry("아카이브 뉴스레터","아카이브 > 뉴스레터","센터 뉴스레터 모음입니다.",
+             [LinkItem("https://www.cheonanurc.or.kr/144","뉴스레터")],
+             aliases=["뉴스레터","소식지","센터 뉴스레터","레터"], page_ids=["144"]),
     # ── 아카이브
     UrlEntry("아카이브 발간물","아카이브 > 발간물","천안시 도시재생지원센터에서 발행한 자료들을 열람하거나 다운로드할 수 있습니다.",
              [LinkItem("https://www.cheonanurc.or.kr/36","발간물")],
@@ -298,6 +301,9 @@ ENTRIES: List[UrlEntry] = [
     UrlEntry("사업소개 봉평지구 도시재생뉴딜사업","사업소개 > 봉평지구 도시재생사업","봉평지구 도시재생사업 안내입니다.",
              [LinkItem("https://www.cheonanurc.or.kr/72","봉평지구 도시재생뉴딜사업")],
              aliases=["봉평지구 사업","봉명지구 사업"], page_ids=["72"]),
+    UrlEntry("아카이브 뉴스레터","아카이브 > 뉴스레터","센터 뉴스레터 모음입니다.",
+             [LinkItem("https://www.cheonanurc.or.kr/144","뉴스레터")],
+             aliases=["뉴스레터","소식지","센터 뉴스레터","레터"], page_ids=["144"]),
 ]
 
 # ── 인덱스/섹션
@@ -468,7 +474,7 @@ def find_url_answer(query: str) -> Optional[UrlResult]:
 
     # 0) '페이지를 묻는' 의도 선판별(요청어 보존 토큰)
     ptoks = _canon_tokens(_tokenize(query, preserve_request=True))
-    ptset = set(ptoks)
+    ptset = set(ptoks)   # ✅ set 변환 추가
     
     # A) 섹션 전체 브로드캐스트
     sec = _detect_section(ptoks)
@@ -477,7 +483,7 @@ def find_url_answer(query: str) -> Optional[UrlResult]:
         return _render_list(f"{sec} 섹션 링크 모음", items)
 
     # B) 투어 전용 브로드캐스트 (예: '전문투어 어디서 확인하지?')
-    if "투어" in ptoks and (ptoks & BROADCAST_HINTS or any(t.startswith("어디") for t in ptoks)):
+    if "투어" in ptoks and (ptset & BROADCAST_HINTS or any(t.startswith("어디") for t in ptoks)):
         # 번호가 들어있다면 개별 매칭 단계로 넘김
         kind, num = _extract_course(ptoks)
         if not num:
@@ -489,25 +495,31 @@ def find_url_answer(query: str) -> Optional[UrlResult]:
 
     # 1) 일반 매칭
     cands = _best_candidates(query)
-    if not cands: return None
+    if not cands:
+        return None
 
-    cands.sort(key=lambda x:x[1], reverse=True)
+    cands.sort(key=lambda x: x[1], reverse=True)
     best = cands[0][1]
     hits = [cands[0][0]]
-    for e,s in cands[1:]:
-        if s >= best-0.03: hits.append(e)
-        if len(hits) >= 3: break
+    for e, s in cands[1:]:
+        if s >= best - 0.03:
+            hits.append(e)
+        if len(hits) >= 3:
+            break
 
-    if len(hits)==1:
+    if len(hits) == 1:
         return UrlResult(html=hits[0].to_html(), hits=hits)
 
     parts = ["원하시는 항목에 가장 가까운 링크들입니다.<br><br><ul>"]
     for e in hits:
         first = e.links[0] if e.links else None
         if first:
-            parts.append(f"<li><strong>{html.escape(e.title)}</strong><br>{_anchor(first.url, first.label or first.url)}</li>")
+            parts.append(
+                f"<li><strong>{html.escape(e.title)}</strong><br>{_anchor(first.url, first.label or first.url)}</li>"
+            )
     parts.append("</ul>")
     return UrlResult("".join(parts), hits=hits)
+
 
 def list_registered_keys() -> List[str]:
     return [e.q for e in ENTRIES]
@@ -533,6 +545,8 @@ if __name__ == "__main__":
         # 오시는길
         "오시는길 센터", "봉명 오시는 길", "오룡 약도",
         "센터 주소 어디야", "봉명 주소좀", "오룡 위치 알려줘",
+
+        "아카이브 뉴스레터", "뉴스레터 페이지", "센터 소식지", "레터 링크",
 
         # 기타 표현 변형
         "도시재생+ 프로그램 신청 어디서 확인함?", "프로그램 접수 페이지 URL 줄래?",
