@@ -76,7 +76,8 @@ def build_center_intro_index(clean_dir: Path = DEFAULT_CLEAN_DIR) -> Dict[str, L
                                 buckets[sec_key].append(snippet)
     # Fallback 보강
     for k, v in FALLBACK_TEXT.items():
-        if not buckets.get(k):
+        values = buckets.get(k, [])
+        if not values or all("로컬 이미지 OCR" in s or "local://images" in s for s in values):
             buckets[k] = list(v)
     return buckets
 
@@ -92,3 +93,18 @@ def query_contact(index: Dict[str, List[str]]) -> List[str]:
         "- Tel: 041-417-4061~5 / Fax: 041-417-4069",
         "- 오시는 길: 센터·봉명·오룡 각 센터 지도 이미지를 요청하시면 이미지로 안내해 드립니다.",
     ]
+def _summarize_korean(text: str, max_sentences: int = 2) -> str:
+    if not text:
+        return ""
+    sents = [s.strip() for s in re.split(r"[.!?。\n]+", text) if s.strip()]
+    return " ".join(sents[:max_sentences])
+
+def render_intro_summary_with_link(intro_url: str = "") -> str:
+    index = build_center_intro_index()
+    blocks = query_section(index, "인사말")
+    full_text = (blocks[0] if blocks else "").strip()
+
+    title = "센터소개 > 인사말"
+    summary = _summarize_korean(full_text, max_sentences=2)
+    link_html = f'\n\n• <a href="{intro_url}" target="_blank">인사말 전문 보기</a>' if intro_url else ""
+    return f"<strong>{title}</strong>\n\n{summary}{link_html}"

@@ -37,7 +37,7 @@ from app.rag.prompt import PROMPT_FUSION, PROMPT_SINGLE, STYLE_GUIDE
 from app.rag.retriever import get_retriever, get_vectorstore
 from app.rag.faq import find_faq_answer
 from app.rag.hooks.directions import answer_directions
-from app.rag.sections.center_intro import build_center_intro_index, query_contact, query_section
+from app.rag.sections.center_intro import build_center_intro_index, query_contact, query_section, render_intro_summary_with_link
 from app.rag.url import find_url_answer
 from app.rag.sections.business import answer_business, is_business_query
 
@@ -406,22 +406,18 @@ _CI_HINT = re.compile(r"(센터\s*소개|인사말|연혁|조직도|목표|비�
 def _answer_center_intro(q: str) -> Optional[str]:
     if not _CI_HINT.search(q):
         return None
-    idx = build_center_intro_index()
+    
     if re.search(r"인사말", q):
-        blocks = query_section(idx, "인사말");  return _to_html("\n\n".join(blocks)) if blocks else None
+        return _to_html(render_intro_summary_with_link("https://www.cheonanurc.or.kr/24"))
+    
+    idx = build_center_intro_index()
     if re.search(r"연혁", q):
         blocks = query_section(idx, "연혁");    return _to_html("\n\n".join(blocks)) if blocks else None
     if re.search(r"조직도", q):
         blocks = query_section(idx, "조직도");   return _to_html("\n\n".join(blocks)) if blocks else None
     if re.search(r"(목표|비전)", q):
         blocks = query_section(idx, "목표비전"); return _to_html("\n\n".join(blocks)) if blocks else None
-    blocks = query_section(idx, "인사말")
-    contacts = query_contact(idx)
-    if blocks or contacts:
-        msg = []
-        if blocks:   msg.append("\n\n".join(blocks[:1]))
-        if contacts: msg.append("### 연락처 요약\n" + "\n".join(contacts))
-        return _to_html("\n\n".join(msg))
+
     return None
 
 # ─────────────────────────────────────────────────────────
