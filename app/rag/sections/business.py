@@ -60,33 +60,42 @@ def _to_data_uri(filepath: str) -> str:
     return f"data:{mime};base64,{b64}"
 
 def _img_src(filename: str, prefer_data_uri: bool = True) -> str:
-    if prefer_data_uri:
-        fp = _find_file_path(filename)
-        if fp and os.path.exists(fp):
-            try:
-                return _to_data_uri(fp)
-            except Exception:
-                pass
+    # if prefer_data_uri:
+    #     fp = _find_file_path(filename)
+    #     if fp and os.path.exists(fp):
+    #         try:
+    #             return _to_data_uri(fp)
+    #         except Exception:
+    #             pass
+    # ↑↑↑ 주석 처리: /static URL만 사용 (범진)
+    
     base = (STATIC_URL_PREFIX or "/static").rstrip("/")
     sub  = ("/" + CENTER_IMG_SUBDIR.strip("/")) if CENTER_IMG_SUBDIR else ""
     prefix = (PUBLIC_BASE_URL.rstrip("/") + base) if PUBLIC_BASE_URL else base
     return f"{prefix}{sub}/{filename}"
 
 def _img_tag(filename: str, alt: str) -> str:
-    src = _img_src(filename, prefer_data_uri=True)
-    return (f"<img src='{src}' alt='{html.escape(alt)}' "
-            "style='max-width:100%;border-radius:12px;box-shadow:0 2px 8px rgba(0,0,0,.08);display:block;'>")
+    # 성능: data URI를 쓰지 않고 /static 경로 사용 (범진)
+    src = _img_src(filename, prefer_data_uri=False)
+     # UX: 지연 로딩/비동기 디코딩/낮은 우선순위로 페인트 지연 최소화
+    return (
+        f"<img src='{src}' alt='{html.escape(alt)}' "
+        "loading='lazy' decoding='async' fetchpriority='low' referrerpolicy='no-referrer' "
+        "style='max-width:100%;border-radius:12px;box-shadow:0 2px 8px rgba(0,0,0,.08);display:block;'>"
+    )
+    # return (f"<img src='{src}' alt='{html.escape(alt)}' "
+    #         "style='max-width:100%;border-radius:12px;box-shadow:0 2px 8px rgba(0,0,0,.08);display:block;'>")
 
 # ─────────────────────────────────────────────────────────
 # 질의 의도: 사업 전체/단답/구상도
 FIELD_HINTS = {
-    "name":   re.compile(r"(사업\s*명|사업명|명칭|이름)", re.IGNORECASE),
-    "type":   re.compile(r"(유형|타입|종류)", re.IGNORECASE),
-    "area":   re.compile(r"(사업\s*지[역구]|어디|위치|대상지)", re.IGNORECASE),
-    "period": re.compile(r"(기간|연도|년도|언제부터|언제까지)", re.IGNORECASE),
-    "budget": re.compile(r"(사업비|예산|총\s*사업비|비용|돈)", re.IGNORECASE),
-    "goals":  re.compile(r"(목표|지향|비전)", re.IGNORECASE),
-    "main":   re.compile(r"(주요\s*사업|세부\s*사업|내용|무슨\s*사업)", re.IGNORECASE),
+    "name":   re.compile(r"(사업\s*명|사업명|명칭|이름|사업\s*개요)", re.IGNORECASE),
+    "type":   re.compile(r"(유형|타입|종류|사업\s*개요)", re.IGNORECASE),
+    "area":   re.compile(r"(사업\s*지[역구]|어디|위치|대상지|사업\s*개요)", re.IGNORECASE),
+    "period": re.compile(r"(기간|연도|년도|언제부터|언제까지|사업\s*개요)", re.IGNORECASE),
+    "budget": re.compile(r"(사업비|예산|총\s*사업비|비용|돈|사업\s*개요)", re.IGNORECASE),
+    "goals":  re.compile(r"(목표|지향|비전|사업\s*내용)", re.IGNORECASE),
+    "main":   re.compile(r"(주요\s*사업|세부\s*사업|사업\s*내용|내용|무슨\s*사업)", re.IGNORECASE),
     "plan":   re.compile(r"(구상도|총괄도|마스터\s*플[랜]|계획도|조감도|그림|이미지|사진)", re.IGNORECASE),
 }
 
@@ -113,9 +122,22 @@ BUSINESS: Dict[str, Dict] = {
         "main": [],
         "link": None,
     },
+    "cheonan-lead": {
+        "title": "천안 도시재생선도사업",
+        "name":  "복합문화특화 공간으로 거듭나는 천안원도심",
+        "img": "천안 도시재생선도사업.jpg",
+        "aliases": ["천안","선도사업","동남구청사","복합문화특화","선도지역"],
+        "type": "선도지역",
+        "area": "동남구 중앙동, 문성동 일원",
+        "period": "2014 ~ 2021",
+        "budget": "3,448억 (국비 60, 도비 12, 시비 54, 기타 3,222)",
+        "goals": ["빈공간 채우기", "젊은층 끌어들이기", "문화콘텐츠 끌어오기", "다문화 끌어안기"],
+        "main": ["동남구청사 복합개발", "도시창조 두드림센터 조성", "청년활동 공간 조성", "참여형 플랫폼사업"],
+        "link": None,
+    },
     "cheonan-station": {
         "title": "천안역세권 도시재생사업",
-        "name":  "천안역세권 도시재생사업",
+        "name":  "경제·문화·세대를 잇는 천안 스테이션 캠퍼스 천안역세권",
         "img": "천안역세권 도시재생사업.jpg",
         "aliases": ["천안역세권","역세권","스테이션 캠퍼스","캠퍼스타운","중심시가지형"],
         "type": "중심시가지형",
@@ -128,7 +150,7 @@ BUSINESS: Dict[str, Dict] = {
     },
     "cheonan-innovation": {
         "title": "천안역세권 혁신지구 도시재생사업",
-        "name":  "천안역세권 혁신지구 도시재생사업",
+        "name":  "지역거점 조성을 통한 도시재생 활성화",
         "img": "천안역세권 혁신지구 도시재생사업.jpg",
         "aliases": ["혁신지구","역세권 혁신지구","혁신","혁신재생"],
         "type": "혁신지구 재생사업",
@@ -140,8 +162,8 @@ BUSINESS: Dict[str, Dict] = {
         "link": None,
     },
     "namsan": {
-        "title": "남산지구 도시재생 뉴딜사업",
-        "name":  "남산지구 도시재생 뉴딜사업",
+        "title": "남산지구 도시재생뉴딜사업",
+        "name":  "남산지구의 오래된 미래_역사와 지역이 함께하는 고령친화마을",
         "img": "남산지구 도시재생 뉴딜사업.jpg",
         "aliases": ["남산지구","사직동","고령친화"],
         "type": "일반근린형",
@@ -154,7 +176,7 @@ BUSINESS: Dict[str, Dict] = {
     },
     "bongmyeong": {
         "title": "봉명지구 도시재생뉴딜사업",
-        "name":  "봉명지구 도시재생뉴딜사업",
+        "name":  "철길을 넘어, 문화와 상권을 잇다 통합돌봄마을",
         "img": "봉명지구 도시재생뉴딜사업.jpg",
         "aliases": ["봉명지구","통합돌봄마을","봉명"],
         "type": "일반근린형",
@@ -167,9 +189,9 @@ BUSINESS: Dict[str, Dict] = {
     },
     "oryong-ritz": {
         "title": "오룡지구 민·관 협력형 도시재생 리츠사업",
-        "name":  "오룡지구 민·관 협력형 도시재생 리츠사업",
+        "name":  "도시재생의 새로운 거점, 원도심 발전의 중심. 천안의 새로운 100년을 위해 다시 태어나는 오룡경기장",
         "img": "오룡지구 민-관 협력형 도시재생 리츠사업.jpg",
-        "aliases": ["오룡 리츠","오룡경기장","민관협력형"],
+        "aliases": ["오룡 리츠","오룡경기장","민관협력형", "리츠사업"],
         "type": "민관협력형 리츠사업",
         "area": "천안시 동남구 원성동 31-70 일원",
         "period": "2021 ~ 2028",
@@ -180,7 +202,7 @@ BUSINESS: Dict[str, Dict] = {
     },
     "oryong": {
         "title": "오룡지구 도시재생사업",
-        "name":  "오룡지구 도시재생사업",
+        "name":  "지역 가치를 담은 로코노미, 골목 벤처벨리 오룡지구",
         "img": "오룡지구도시재생사업.png",
         "aliases": ["오룡지구","로코노미","골목 벤처밸리","원성동 31-25"],
         "type": "특화재생형",
@@ -193,7 +215,7 @@ BUSINESS: Dict[str, Dict] = {
     },
     "wonseong2": {
         "title": "원성2지구 뉴·빌리지사업",
-        "name":  "원성2지구 뉴·빌리지사업",
+        "name":  "맞춤형 인프라 구축을 통한 N분 생활권 원성2지구",
         "img": "원성2지구 뉴-빌리지사업.png",
         "aliases": ["원성2지구","뉴빌리지","N분 생활권","원성2"],
         "type": "뉴·빌리지 사업",

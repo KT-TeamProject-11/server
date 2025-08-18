@@ -1,22 +1,21 @@
-__pycache__/
-*.py[cod]
-*.so
-*.egg
-*.egg-info/
-dist/
-build/
+# __pycache__/
+# *.py[cod]
+# *.so
+# *.egg
+# *.egg-info/
+# dist/
+# build/
 
 venv/
 .env
 
 .vscode/
 
-app/data/index.faiss/
-app/data/index.faiss/*
+# app/data/index.faiss/
+# app/data/index.faiss/*
 
-
-app/data/*
-app/data
+# app/data/clean/
+# app/data/clean/*
 
 .DS_Store
 
