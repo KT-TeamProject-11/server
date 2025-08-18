@@ -1,40 +1,50 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
+
+import html
 import re
-from typing import Dict, List, Tuple
+from urllib.parse import quote
+from typing import Dict, List, Tuple, Optional
 
-# 정적 경로: 무조건 /static 사용 (config 있으면 따라가고, 없으면 /static 유지)
+# PUBLIC_BASE_URL 안전 import (없으면 빈 문자열)
 try:
-    from app.config import STATIC_URL_PREFIX, PUBLIC_BASE_URL
+    from app.config import PUBLIC_BASE_URL
 except Exception:
-    STATIC_URL_PREFIX, PUBLIC_BASE_URL = "/static", ""
+    PUBLIC_BASE_URL = ""
 
-def _img_url(filename: str) -> str:
-    base = (STATIC_URL_PREFIX or "/static").rstrip("/")
-    prefix = (PUBLIC_BASE_URL.rstrip("/") + base) if PUBLIC_BASE_URL else base
-    return f"{prefix}/{filename}"
+def _img_src(filename: str) -> str:
+    base = (PUBLIC_BASE_URL or "").rstrip("/")
+    if base:
+        return f"{base}/img?name={quote(filename)}"
+    return f"/img?name={quote(filename)}"
 
-# 질문에 필드가 언급되면 강조
+def _img_tag(filename: str, alt: str) -> str:
+    src = _img_src(filename)
+    return (
+        f"<img src='{src}' alt='{html.escape(alt)}' "
+        "loading='lazy' decoding='async' fetchpriority='low' referrerpolicy='no-referrer' "
+        "style='max-width:100%;border-radius:12px;box-shadow:0 2px 8px rgba(0,0,0,.08);display:block;'>"
+    )
+
 FIELD_HINTS = {
-    "type":   re.compile(r"(유형|타입|종류)", re.IGNORECASE),
-    "area":   re.compile(r"(사업\s*지[역구]|어디|위치)", re.IGNORECASE),
-    "period": re.compile(r"(기간|언제|연도|년도)", re.IGNORECASE),
-    "budget": re.compile(r"(사업비|예산|총\s*사업비|돈|비용)", re.IGNORECASE),
-    "goals":  re.compile(r"(목표|지향|비전)", re.IGNORECASE),
-    "main":   re.compile(r"(주요\s*사업|무엇을|무슨\s*사업|내용)", re.IGNORECASE),
+    "name":   re.compile(r"(사업\s*명|사업명|명칭|이름|사업\s*개요)", re.IGNORECASE),
+    "type":   re.compile(r"(유형|타입|종류|사업\s*개요)", re.IGNORECASE),
+    "area":   re.compile(r"(사업\s*지[역구]|어디|위치|대상지|사업\s*개요)", re.IGNORECASE),
+    "period": re.compile(r"(기간|연도|년도|언제부터|언제까지|사업\s*개요)", re.IGNORECASE),
+    "budget": re.compile(r"(사업비|예산|총\s*사업비|비용|돈|사업\s*개요)", re.IGNORECASE),
+    "goals":  re.compile(r"(목표|지향|비전|사업\s*내용)", re.IGNORECASE),
+    "main":   re.compile(r"(주요\s*사업|세부\s*사업|사업\s*내용|내용|무슨\s*사업)", re.IGNORECASE),
+    "plan":   re.compile(r"(구상도|총괄도|마스터\s*플[랜]|계획도|조감도|그림|이미지|사진)", re.IGNORECASE),
 }
-def want_fields(q: str) -> List[str]:
-    out: List[str] = []
-    for k, pat in FIELD_HINTS.items():
-        if pat.search(q or ""):
-            out.append(k)
-    return out
 
-# 사업 데이터 (이미지는 전부 /static)
+def _want_fields(q: str) -> List[str]:
+    return [k for k, pat in FIELD_HINTS.items() if pat.search(q or "")]
+
 BUSINESS: Dict[str, Dict] = {
     "overview": {
         "title": "천안시 도시재생사업 총괄도",
-        "img": _img_url("천안시 도시재생사업 총괄도.jpg"),
+        "name":  "천안시 도시재생사업 총괄도",
+        "img":   "천안시 도시재생사업 총괄도.jpg",
         "aliases": ["총괄도","종합구상도","한눈에","전체","모두","지도","계획","사업 전체"],
         "type": "-",
         "area": "천안시 전역(표시 구역 참조)",
@@ -44,9 +54,23 @@ BUSINESS: Dict[str, Dict] = {
         "main": [],
         "link": None,
     },
+    "cheonan-lead": {
+        "title": "천안 도시재생선도사업",
+        "name":  "복합문화특화 공간으로 거듭나는 천안원도심",
+        "img":   "천안 도시재생선도사업.jpg",
+        "aliases": ["천안","선도사업","동남구청사","복합문화특화","선도지역"],
+        "type": "선도지역",
+        "area": "동남구 중앙동, 문성동 일원",
+        "period": "2014 ~ 2021",
+        "budget": "3,448억 (국비 60, 도비 12, 시비 54, 기타 3,222)",
+        "goals": ["빈공간 채우기", "젊은층 끌어들이기", "문화콘텐츠 끌어오기", "다문화 끌어안기"],
+        "main": ["동남구청사 복합개발", "도시창조 두드림센터 조성", "청년활동 공간 조성", "참여형 플랫폼사업"],
+        "link": None,
+    },
     "cheonan-station": {
         "title": "천안역세권 도시재생사업",
-        "img": _img_url("천안역세권 도시재생사업.jpg"),
+        "name":  "경제·문화·세대를 잇는 천안 스테이션 캠퍼스 천안역세권",
+        "img":   "천안역세권 도시재생사업.jpg",
         "aliases": ["천안역세권","역세권","스테이션 캠퍼스","캠퍼스타운","중심시가지형"],
         "type": "중심시가지형",
         "area": "천안시 서북구 와촌동 106-17 일원",
@@ -58,7 +82,8 @@ BUSINESS: Dict[str, Dict] = {
     },
     "cheonan-innovation": {
         "title": "천안역세권 혁신지구 도시재생사업",
-        "img": _img_url("천안역세권 혁신지구 도시재생사업.jpg"),
+        "name":  "지역거점 조성을 통한 도시재생 활성화",
+        "img":   "천안역세권 혁신지구 도시재생사업.jpg",
         "aliases": ["혁신지구","역세권 혁신지구","혁신","혁신재생"],
         "type": "혁신지구 재생사업",
         "area": "천안시 서북구 와촌동 106-68 일원",
@@ -69,8 +94,9 @@ BUSINESS: Dict[str, Dict] = {
         "link": None,
     },
     "namsan": {
-        "title": "남산지구 도시재생 뉴딜사업",
-        "img": _img_url("남산지구 도시재생 뉴딜사업.jpg"),
+        "title": "남산지구 도시재생뉴딜사업",
+        "name":  "남산지구의 오래된 미래_역사와 지역이 함께하는 고령친화마을",
+        "img":   "남산지구 도시재생 뉴딜사업.jpg",
         "aliases": ["남산지구","사직동","고령친화"],
         "type": "일반근린형",
         "area": "천안시 동남구 사직동 284-3 번지 일원",
@@ -82,7 +108,8 @@ BUSINESS: Dict[str, Dict] = {
     },
     "bongmyeong": {
         "title": "봉명지구 도시재생뉴딜사업",
-        "img": _img_url("봉명지구 도시재생뉴딜사업.jpg"),
+        "name":  "철길을 넘어, 문화와 상권을 잇다 통합돌봄마을",
+        "img":   "봉명지구 도시재생뉴딜사업.jpg",
         "aliases": ["봉명지구","통합돌봄마을","봉명"],
         "type": "일반근린형",
         "area": "천안시 동남구 봉명동 39-1 일원",
@@ -94,8 +121,9 @@ BUSINESS: Dict[str, Dict] = {
     },
     "oryong-ritz": {
         "title": "오룡지구 민·관 협력형 도시재생 리츠사업",
-        "img": _img_url("오룡지구 민-관 협력형 도시재생 리츠사업.jpg"),
-        "aliases": ["오룡 리츠","오룡경기장","민관협력형"],
+        "name":  "도시재생의 새로운 거점, 원도심 발전의 중심. 천안의 새로운 100년을 위해 다시 태어나는 오룡경기장",
+        "img":   "오룡지구 민-관 협력형 도시재생 리츠사업.jpg",
+        "aliases": ["오룡 리츠","오룡경기장","민관협력형", "리츠사업"],
         "type": "민관협력형 리츠사업",
         "area": "천안시 동남구 원성동 31-70 일원",
         "period": "2021 ~ 2028",
@@ -106,7 +134,8 @@ BUSINESS: Dict[str, Dict] = {
     },
     "oryong": {
         "title": "오룡지구 도시재생사업",
-        "img": _img_url("오룡지구도시재생사업.jpg"),
+        "name":  "지역 가치를 담은 로코노미, 골목 벤처벨리 오룡지구",
+        "img":   "오룡지구도시재생사업.png",
         "aliases": ["오룡지구","로코노미","골목 벤처밸리","원성동 31-25"],
         "type": "특화재생형",
         "area": "천안시 동남구 원성동 31-25 일원",
@@ -118,7 +147,8 @@ BUSINESS: Dict[str, Dict] = {
     },
     "wonseong2": {
         "title": "원성2지구 뉴·빌리지사업",
-        "img": _img_url("원성2지구 뉴-빌리지사업.jpg"),
+        "name":  "맞춤형 인프라 구축을 통한 N분 생활권 원성2지구",
+        "img":   "원성2지구 뉴-빌리지사업.png",
         "aliases": ["원성2지구","뉴빌리지","N분 생활권","원성2"],
         "type": "뉴·빌리지 사업",
         "area": "천안시 동남구 원성동 635 일원",
@@ -151,6 +181,70 @@ def _guess_keys(q: str) -> List[str]:
     hits.sort(key=lambda x: x[1], reverse=True)
     return [k for k, _ in hits]
 
-def find_business_items(q: str) -> List[Dict]:
+_BIZ_ANY_HINT = re.compile(r"(사업|구상도|총괄도|마스터\s*플[랜]|조감도|계획도)", re.IGNORECASE)
+
+def is_business_query(q: str) -> bool:
+    if not q:
+        return False
+    if _BIZ_ANY_HINT.search(q):
+        return True
+    ql = q.lower()
+    for meta in BUSINESS.values():
+        if any(a.lower() in ql for a in meta.get("aliases", [])):
+            return True
+    return False
+
+def answer_business(q: str) -> Optional[str]:
     keys = _guess_keys(q)
-    return [BUSINESS[k] for k in keys if k in BUSINESS]
+    items = [BUSINESS[k] for k in keys if k in BUSINESS]
+    if not items:
+        return None
+
+    item = items[0]
+    wants = _want_fields(q)
+
+    if wants:
+        if len(wants) == 1 and wants[0] == "plan":
+            title = f"{item.get('title','')} 구상도".strip()
+            imgfile = item.get("img")
+            if not imgfile:
+                return "<b>구상도</b>: 없음"
+            return (
+                "<div>"
+                f"<div style='font-weight:700;font-size:16px;margin:4px 0 8px'>{html.escape(title)}</div>"
+                f"{_img_tag(imgfile, title)}"
+                "</div>"
+            )
+
+        label_map = {"name":"사업명","type":"유형","area":"사업지역","period":"사업기간","budget":"사업비"}
+        rows: List[str] = []
+        for w in wants:
+            if w in ("goals","main"):
+                key_label = "사업목표" if w == "goals" else "주요사업"
+                vals = item.get(w, []) or []
+                rows.append(f"• <b>{key_label}</b>: {html.escape(', '.join(vals) or '-')}")
+            elif w == "plan":
+                imgfile = item.get("img")
+                rows.append("<div style='margin-top:8px'><b>구상도</b></div>" +
+                            (_img_tag(imgfile, item.get('title','')) if imgfile else "없음"))
+            else:
+                rows.append(f"• <b>{label_map.get(w,w)}</b>: {html.escape(item.get(w,'-'))}")
+        return "<div>" + "<br>".join(rows) + "</div>"
+
+    head = f"<div style='font-weight:700;font-size:18px;margin:4px 0 10px'>{html.escape(item['title'])}</div>"
+    img_html = _img_tag(item["img"], item["title"]) if item.get("img") else ""
+    rows = [
+        f"• <b>사업명</b>: {html.escape(item.get('name','-'))}",
+        f"• <b>유형</b>: {html.escape(item.get('type','-'))}",
+        f"• <b>사업지역</b>: {html.escape(item.get('area','-'))}",
+        f"• <b>사업기간</b>: {html.escape(item.get('period','-'))}",
+        f"• <b>사업비</b>: {html.escape(item.get('budget','-'))}",
+    ]
+    if item.get("goals"):
+        rows.append("<div style='margin-top:6px'><b>사업목표</b></div><ul>" +
+                    "".join(f"<li>{html.escape(x)}</li>" for x in item["goals"]) + "</ul>")
+    if item.get("main"):
+        rows.append("<div style='margin-top:6px'><b>주요사업</b></div><ul>" +
+                    "".join(f"<li>{html.escape(x)}</li>" for x in item["main"]) + "</ul>")
+
+    return "<div>" + head + img_html + "<br>".join(rows) + "</div>"

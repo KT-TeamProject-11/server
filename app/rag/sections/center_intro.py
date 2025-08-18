@@ -16,8 +16,20 @@ SECTION_ANCHORS = {
 # OCR이 없거나 부족한 경우 대비한 안전한 Fallback
 FALLBACK_TEXT: Dict[str, List[str]] = {
     "인사말": [
-        "천안시 도시재생지원센터 홈페이지를 방문해 주셔서 감사합니다. "
-        "저희 센터는 주민과 행정의 가교로서 지역 맞춤형 도시재생을 지원합니다.",
+        """천안시 도시재생지원센터 홈페이지를 방문해 주신 여러분 환영합니다.
+
+        천안시는 2014년 도시재생 선도사업을 시작으로 천안역세권 도시재생뉴딜사업과 혁신지구사업, 
+        남산지구 도시재생뉴딜사업, 봉명지구 도시재생뉴딜사업, 오룡경기장 민관협력형 도시재생리츠사업과 
+        오룡지구 도시재생사업 등 도시재생사업을 활발히 추진하고 있습니다.
+
+        천안시 도시재생지원센터는 천안시 도시재생을 지원하기 위한 중간지원조직으로 2015년 개소하여, 
+        천안 시민들의 삶의 질 향상과 지역 공동체 회복, 자생적 도시재생 기반을 구축하기 위해 
+        다양한 주민 역량강화 프로그램을 운영하고 주체들을 육성하며 주민 중심의 도시재생사업을 추진하기 위해 노력해왔습니다.
+
+        앞으로도 천안시 도시재생지원센터는 도시재생을 통한 천안시의 발전과 시민의 행복을 위해 최선을 다하겠습니다.
+
+        감사합니다.
+        천안시 도시재생지원센터""",
     ],
     "연혁": [
         "2015년 개소 이후 도시재생 뉴딜·혁신지구, 현장지원센터 운영 등 다양한 사업을 추진해 왔습니다.",
@@ -64,7 +76,8 @@ def build_center_intro_index(clean_dir: Path = DEFAULT_CLEAN_DIR) -> Dict[str, L
                                 buckets[sec_key].append(snippet)
     # Fallback 보강
     for k, v in FALLBACK_TEXT.items():
-        if not buckets.get(k):
+        values = buckets.get(k, [])
+        if not values or all("로컬 이미지 OCR" in s or "local://images" in s for s in values):
             buckets[k] = list(v)
     return buckets
 
@@ -80,3 +93,18 @@ def query_contact(index: Dict[str, List[str]]) -> List[str]:
         "- Tel: 041-417-4061~5 / Fax: 041-417-4069",
         "- 오시는 길: 센터·봉명·오룡 각 센터 지도 이미지를 요청하시면 이미지로 안내해 드립니다.",
     ]
+def _summarize_korean(text: str, max_sentences: int = 2) -> str:
+    if not text:
+        return ""
+    sents = [s.strip() for s in re.split(r"[.!?。\n]+", text) if s.strip()]
+    return " ".join(sents[:max_sentences])
+
+def render_intro_summary_with_link(intro_url: str = "") -> str:
+    index = build_center_intro_index()
+    blocks = query_section(index, "인사말")
+    full_text = (blocks[0] if blocks else "").strip()
+
+    title = "센터소개 > 인사말"
+    summary = _summarize_korean(full_text, max_sentences=2)
+    link_html = f'\n\n• <a href="{intro_url}" target="_blank">인사말 전문 보기</a>' if intro_url else ""
+    return f"<strong>{title}</strong>\n\n{summary}{link_html}"
