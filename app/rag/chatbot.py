@@ -412,11 +412,12 @@ def _answer_center_intro(q: str) -> Optional[str]:
     
     idx = build_center_intro_index()
     if re.search(r"연혁", q):
-        blocks = query_section(idx, "연혁");    return _to_html("\n\n".join(blocks)) if blocks else None
+        return _to_html(render_intro_summary_with_link("https://www.cheonanurc.or.kr/101", key="연혁", title="센터 연혁"))
     if re.search(r"조직도", q):
-        blocks = query_section(idx, "조직도");   return _to_html("\n\n".join(blocks)) if blocks else None
+        return _to_html(render_intro_summary_with_link("https://www.cheonanurc.or.kr/25", key="조직도", title="조직 및 담당"))
     if re.search(r"(목표|비전)", q):
-        blocks = query_section(idx, "목표비전"); return _to_html("\n\n".join(blocks)) if blocks else None
+        return _to_html(render_intro_summary_with_link("https://www.cheonanurc.or.kr/79", key="목표비전", title="목표와 비전"))
+
 
     return None
 
