@@ -1,27 +1,31 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
+
 import html
+from urllib.parse import quote
 from typing import Dict, List, Tuple
 
+# PUBLIC_BASE_URL 안전 import (없으면 빈 문자열)
 try:
-    from app.config import STATIC_URL_PREFIX, CENTER_IMG_SUBDIR, PUBLIC_BASE_URL
+    from app.config import PUBLIC_BASE_URL
 except Exception:
-    STATIC_URL_PREFIX, CENTER_IMG_SUBDIR, PUBLIC_BASE_URL = "/static", "", ""
+    PUBLIC_BASE_URL = ""
 
-# business의 Data URI 우선 로더 재사용
-try:
-    from app.rag.sections.business import _img_src
-except Exception:
-    def _img_src(filename: str, prefer_data_uri: bool = True) -> str:
-        base = (STATIC_URL_PREFIX or "/static").rstrip("/")
-        sub  = ("/" + CENTER_IMG_SUBDIR.strip("/")) if CENTER_IMG_SUBDIR else ""
-        prefix = (PUBLIC_BASE_URL.rstrip("/") + base) if PUBLIC_BASE_URL else base
-        return f"{prefix}{sub}/{filename}"
+def _img_src(filename: str) -> str:
+    """
+    이미지 프록시를 절대/상대 URL로 생성.
+    - PUBLIC_BASE_URL이 있으면 절대 URL (예: http://localhost:8555/img?name=...)
+    - 없으면 상대 URL (/img?name=...)
+    """
+    base = (PUBLIC_BASE_URL or "").rstrip("/")
+    if base:
+        return f"{base}/img?name={quote(filename)}"
+    return f"/img?name={quote(filename)}"
 
 CENTER_MAPS: Dict[str, Dict] = {
     "cheonan": {
         "title": "천안시 도시재생지원센터 오시는 길",
-        "img": _img_src("center-cheonan.png", prefer_data_uri=True),
+        "img": _img_src("center-cheonan.png"),
         "aliases": ["천안시 도시재생지원센터","천안시도시재생지원센터","본센터","센터 본원","두드림센터"],
         "address": "충남 천안시 동남구 은행길 15, 두드림센터 5층",
         "tel": "041-417-4062",
@@ -31,7 +35,7 @@ CENTER_MAPS: Dict[str, Dict] = {
     },
     "bongmyeong": {
         "title": "봉명지구 도시재생현장지원센터 오시는 길",
-        "img": _img_src("center-bongmyeong.png", prefer_data_uri=True),
+        "img": _img_src("center-bongmyeong.png"),
         "aliases": ["봉명지구","봉명 현장지원센터","봉명센터","봉명동","봉정로"],
         "address": "충남 천안시 동남구 봉정로 39, 봉명동 행정복지센터 3층",
         "tel": "041-577-3992",
@@ -41,7 +45,7 @@ CENTER_MAPS: Dict[str, Dict] = {
     },
     "oryong": {
         "title": "오룡지구 도시재생현장지원센터 오시는 길",
-        "img": _img_src("center-oryong.png", prefer_data_uri=True),
+        "img": _img_src("center-oryong.png"),
         "aliases": ["오룡지구","오룡 현장지원센터","오룡센터","신부동"],
         "address": "충남 천안시 동남구 신부7길 14, 1층",
         "tel": "041-566-4526",
@@ -62,7 +66,7 @@ def _guess_center_keys(q: str) -> List[str]:
     hits: List[Tuple[str, int]] = []
     for k, meta in CENTER_MAPS.items():
         score = 0
-        for alias in meta["aliases"]:
+        for alias in meta.get("aliases", []):
             if alias.lower() in q:
                 score += 2
         if k in q:
@@ -85,6 +89,7 @@ def render_map_html(items: List[Dict]) -> str:
         img  = (
             f'<div style="margin:8px 0 6px">'
             f'<img src="{m["img"]}" alt="{html.escape(m["title"])}" '
+            f'loading="lazy" decoding="async" fetchpriority="low" referrerpolicy="no-referrer" '
             f'style="max-width:100%;border-radius:10px;box-shadow:0 2px 8px rgba(0,0,0,.08);display:block;">'
             f"</div>"
         )

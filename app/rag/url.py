@@ -264,6 +264,22 @@ ENTRIES: List[UrlEntry] = [
     UrlEntry("도시재생플러스 도시재생투어 전문코스3","도시재생+ > 도시재생투어 > 전문코스3","전문코스3 안내입니다.",
              [LinkItem("https://www.cheonanurc.or.kr/100","전문코스3")],
              aliases=["전문코스 3","전문 코스 3","코스3 (전문)","투어 전문코스3"], page_ids=["100"]),
+    # ── 아카이브
+    UrlEntry("아카이브 발간물","아카이브 > 발간물","센터 발간물 자료 모음입니다.",
+             [LinkItem("https://www.cheonanurc.or.kr/36","발간물")],
+             aliases=["발간물","자료집","센터 발간물"], page_ids=["36"]),
+    UrlEntry("아카이브 홍보 동영상","아카이브 > 홍보 동영상","센터 홍보 동영상 모음입니다.",
+             [LinkItem("https://www.youtube.com/watch?v=ghzmqbIRJo0","홍보 동영상")],
+             aliases=["홍보동영상","홍보 영상","동영상 자료"], page_ids=[]),
+    UrlEntry("아카이브 도시재생 뉴스","아카이브 > 도시재생 뉴스","도시재생 관련 뉴스 모음입니다.",
+             [LinkItem("https://www.cheonanurc.or.kr/35","도시재생 뉴스")],
+             aliases=["도시재생뉴스","뉴스","센터뉴스"], page_ids=["35"]),
+    UrlEntry("아카이브 전문가 오피니언","아카이브 > 전문가 오피니언","전문가 오피니언/칼럼 모음입니다.",
+             [LinkItem("https://www.cheonanurc.or.kr/37","전문가 오피니언")],
+             aliases=["전문가오피니언","오피니언","전문가 칼럼"], page_ids=["37"]),
+    UrlEntry("아카이브 마을기자단 및 인터뷰","아카이브 > 마을기자단 및 인터뷰","마을기자단 소식 및 인터뷰 모음입니다.",
+             [LinkItem("https://www.cheonanurc.or.kr/108","마을기자단 및 인터뷰")],
+             aliases=["마을기자단","인터뷰","마을기자단 및 인터뷰"], page_ids=["108"])
 ]
 
 # ── 인덱스/섹션

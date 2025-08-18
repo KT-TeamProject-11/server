@@ -51,16 +51,10 @@ FAISS_INDEX_PATH = INDEX_DIR
 CLEAN_DIR        = _getenv("CLEAN_DIR", "app/data/clean")
 
 # ─────────────────────────────────────────────────────────
-# 정적 파일 (이미지)
-# 반드시 같은 오리진(/static)으로 제공
 STATIC_URL_PREFIX = "/static"
 STATIC_DIR        = str((Path(__file__).resolve().parent / "static").resolve())
-
-# 하위폴더가 따로 없으면 빈 문자열 유지
 CENTER_IMG_SUBDIR = ""
-
-# 🔒 외부 베이스 URL 끔(동일 오리진만 사용)
-PUBLIC_BASE_URL   = ""
+PUBLIC_BASE_URL   = _getenv("PUBLIC_BASE_URL", "")
 
 def validate_runtime_env():
     missing = []

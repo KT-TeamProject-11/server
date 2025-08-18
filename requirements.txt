@@ -33,3 +33,4 @@ Pillow>=10
 pytesseract 
 pillow
 opencv-python
+tzdata
