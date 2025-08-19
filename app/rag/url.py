@@ -16,7 +16,7 @@ from typing import Dict, List, Optional, Tuple
 
 # ── 정규화 유틸
 _POLITE_SUFFIX = re.compile(r"(좀|조금|구체적으로|자세히|정확히|빨리|빠르게|바로|지금|가능해\??|가능할까요\??|가능한가요\??|한번|한 번)$")
-_ENDING_NOISE  = re.compile(r"(이[야요]?$|인가요\??$|인가요$|인가$|뭐[야요]?$|알려줘(요)?$|알려[ ]?주세요$|가르쳐줘(요)?$|보여줘(요)?$|찾아줘(요)?$)")
+_ENDING_NOISE  = re.compile(r"(은|는|이|가|을|를|으로|에서|에|에게|한테|의|이[야요]?$|인가요\??$|인가요$|인가$|뭐[야요]?$|알려줘(요)?$|알려[ ]?주세요$|가르쳐줘(요)?$|보여줘(요)?$|찾아줘(요)?$)")
 _PUNCT         = re.compile(r"[?!.,;:~…·/\\]+")
 _WS            = re.compile(r"\s+")
 # 문장 끝 '어디/확인/보'류 요청 꼬리 (정규화에서 제거용)
@@ -26,7 +26,6 @@ _REQ_TRAILER   = re.compile(
     r"|어디(서|에서)?"
     r"|하는[가지요건]*"
     r"|알려[줘요]?"
-    r"|볼[수수는]*"
     r"|확인[해]?[줘요]?"
     r"|신청[은가요]?"
     r")$",
@@ -64,6 +63,7 @@ def _tokenize(s: str, *, preserve_request: bool = False) -> List[str]:
 SYN: Dict[str, str] = {
     # 플랫폼
     "인스타": "instagram","인스타그램":"instagram","insta":"instagram","ig":"instagram",
+    "sns":"instagram",
     "유튜브":"youtube","yt":"youtube","youtube":"youtube",
     "밴드":"band","band":"band",
     "블로그":"blog","blog":"blog","네이버":"blog","naver":"blog",
@@ -160,13 +160,13 @@ ENTRIES: List[UrlEntry] = [
     # Instagram
     UrlEntry("인스타그램 도시재생지원센터","Instagram — 천안시 도시재생지원센터","공식 인스타그램 계정입니다.",
              [LinkItem("https://www.instagram.com/cheonan_urc/?hl=ko","cheonan_urc")],
-             aliases=["인스타 센터","센터 인스타","인스타그램 센터","cheonan_urc","인스타 도시재생지원센터","insta cheonan_urc"]),
+             aliases=["인스타 센터","센터 인스타","인스타그램 센터","cheonan_urc","인스타 도시재생지원센터","insta cheonan_urc","sns"]),
     UrlEntry("인스타그램 천안역세권 도시재생현장지원센터","Instagram — 천안역세권 도시재생현장지원센터","천안역세권 현장지원센터 인스타그램입니다.",
              [LinkItem("https://www.instagram.com/cheonan.want/?hl=ko","cheonan.want")],
-             aliases=["인스타 역세권","역세권 인스타","천안역세권 인스타","cheonan.want"]),
+             aliases=["인스타 역세권","역세권 인스타","천안역세권 인스타","cheonan.want", "sns"]),
     UrlEntry("인스타그램 오룡지구 도시재생현장지원센터","Instagram — 오룡지구 도시재생현장지원센터","오룡지구 현장지원센터 인스타그램입니다.",
              [LinkItem("https://www.instagram.com/cheonan_base/","cheonan_base")],
-             aliases=["인스타 오룡","오룡 인스타","오룡지구 인스타","cheonan_base"]),
+             aliases=["인스타 오룡","오룡 인스타","오룡지구 인스타","cheonan_base", "sns"]),
     # Blog
     UrlEntry("블로그 천안도시지원센터","블로그 — 천안도시지원센터","센터 네이버 블로그입니다.",
              [LinkItem("https://blog.naver.com/urc-cheonan","urc-cheonan")],
@@ -301,9 +301,6 @@ ENTRIES: List[UrlEntry] = [
     UrlEntry("사업소개 봉평지구 도시재생뉴딜사업","사업소개 > 봉평지구 도시재생사업","봉평지구 도시재생사업 안내입니다.",
              [LinkItem("https://www.cheonanurc.or.kr/72","봉평지구 도시재생뉴딜사업")],
              aliases=["봉평지구 사업","봉명지구 사업"], page_ids=["72"]),
-    UrlEntry("아카이브 뉴스레터","아카이브 > 뉴스레터","센터 뉴스레터 모음입니다.",
-             [LinkItem("https://www.cheonanurc.or.kr/144","뉴스레터")],
-             aliases=["뉴스레터","소식지","센터 뉴스레터","레터"], page_ids=["144"]),
 ]
 
 # ── 인덱스/섹션
@@ -471,6 +468,17 @@ class UrlResult:
 def find_url_answer(query: str) -> Optional[UrlResult]:
     if not (query or "").strip():
         return None
+
+    # ✅ 도시재생투어 코스 종류 질문 → 전체 코스 안내
+    if "도시재생투어" in query and any(k in query for k in ["코스", "종류", "구성", "분류", "종류가", "어떤", "몇 개", "선택"]):
+        course_links = [e for e in ENTRIES if e.title.startswith("도시재생+ > 도시재생투어 >")]
+        if course_links:
+            parts = ["<strong>도시재생투어는 다음과 같은 코스가 준비되어 있어요. 어떤 걸 원하시나요?</strong><br><br><ul>"]
+            for e in course_links:
+                if e.links:
+                    parts.append(f"<li><strong>{html.escape(e.title)}</strong><br>{_anchor(e.links[0].url, e.links[0].label or e.links[0].url)}</li>")
+            parts.append("</ul>")
+            return UrlResult("".join(parts), hits=course_links)
 
     # 0) '페이지를 묻는' 의도 선판별(요청어 보존 토큰)
     ptoks = _canon_tokens(_tokenize(query, preserve_request=True))
