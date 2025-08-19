@@ -281,16 +281,54 @@ ABS_RANGE = re.compile(
     r"(?P<y2>20\d{2})[.\-년/ ]*(?P<m2>\d{1,2})?[.\-월/ ]*(?P<d2>\d{1,2})?"
 )
 ABS_ONE  = re.compile(r"(?P<y>20\d{2})[.\-년/ ]*(?P<m>\d{1,2})?[.\-월/ ]*(?P<d>\d{1,2})?")
-REL_WORDS= {"작년":-1,"지난해":-1,"올해":0,"금년":0,"내년":1,"다음해":1}
-STATUS_WORDS={"진행":"진행중","진행중":"진행중","모집중":"진행중","예정":"예정","마감":"마감","종료":"마감"}
+# 변경된 부분-------------------------------------
+REL_WORDS = {
+    "작년":-1,"지난해":-1,"올해":0,"금년":0,"내년":1,"다음해":1,
+}
+# ----------------------------------------------
+STATUS_WORDS = {
+    "진행중":"진행중", "모집중":"진행중", "접수중":"진행중", "운영중":"진행중",
+    "예정":"예정",
+    "마감":"마감", "종료":"마감", "완료":"마감",
+}
 Q_WORDS=("프로그램","모집","신청","접수","교육","공모","행사")
 
+# 변경된 부분 --------------------------------------------------
+TIME_HINTS = ("지난달","이번달","이번 달","이달","다음달","재작년","상반기","하반기",
+              "1분기","2분기","3분기","4분기","기간","현재","지금")
+
+# def is_program_date_query(q: str) -> bool:
+#     has_kw = any(k in q for k in Q_WORDS)
+#     has_time = bool(ABS_RANGE.search(q) or ABS_ONE.search(q) or
+#                     any(w in q for w in REL_WORDS) or
+#                     any(w in q for w in ["지난달","이번달","다음달","재작년","상반기","하반기","1분기","2분기","3분기","4분기","기간"]))
+#     return has_kw and has_time
+
+
 def is_program_date_query(q: str) -> bool:
-    has_kw = any(k in q for k in Q_WORDS)
-    has_time = bool(ABS_RANGE.search(q) or ABS_ONE.search(q) or
-                    any(w in q for w in REL_WORDS) or
-                    any(w in q for w in ["지난달","이번달","다음달","재작년","상반기","하반기","1분기","2분기","3분기","4분기","기간"]))
+    ql  = q.lower()
+    qns = ql.replace(" ", "")  # 공백 제거
+
+    has_kw = any(k in ql for k in Q_WORDS)
+
+    # ✅ 진행형·현재형도 시간 힌트로 인정
+    PROG_HINTS = ("진행중","진행중인","모집중","접수중","운영중",
+                  "진행하고있는","진행하고있음","진행하고있","진행하는", "하고있는")
+    has_status = (
+        any(k in ql for k in STATUS_WORDS.keys()) or
+        any(p in qns for p in PROG_HINTS) or
+        re.search(r"진행\s*중", ql) is not None
+    )
+
+    has_time = bool(
+        ABS_RANGE.search(ql) or ABS_ONE.search(ql) or
+        any(w in ql for w in REL_WORDS) or
+        any(w in ql for w in TIME_HINTS) or
+        has_status
+    )
     return has_kw and has_time
+
+# ---------------------------------------------------------------
 
 def month_start(dt: date) -> date: return date(dt.year, dt.month, 1)
 def month_end(dt: date) -> date:
@@ -344,25 +382,53 @@ def parse_korean_date_range(q: str, today: date = TODAY) -> Tuple[Optional[date]
     if "하반기" in q: return date(today.year,7,1), date(today.year,12,31)
     return None, None
 
+# 변경된 부분 -----------------------------------------
 def detect_status_filter(q: str) -> Optional[str]:
-    for k,v in STATUS_WORDS.items():
-        if k in q:
-            return v
+    ql  = q.lower()
+    qns = re.sub(r"\s+", "", ql)
+
+    # 과거형은 상태로 간주 X
+    if any(p in qns for p in ["진행한","진행했던","진행된","진행되었던","개최한","개최했던","실시한","실시했던"]):
+        return None
+
+    # ✅ 진행형도 진행중으로 인식
+    if (any(p in qns for p in ["진행중","진행중인","모집중","접수중","운영중","진행하고있는","진행하고있음","진행하고있", "진행하는", "하고있는"]) or
+        re.search(r"진행\s*중", ql)):
+        return "진행중"
+
+    if "예정" in ql:
+        return "예정"
+
+    if any(w in ql for w in ["마감","종료","완료"]):
+        return "마감"
+
     return None
 
+# -----------------------------------------------------
 def overlaps(a_start: Optional[date], a_end: Optional[date], b_start: Optional[date], b_end: Optional[date]) -> bool:
     a_s = a_start or date.min; a_e = a_end or date.max
     b_s = b_start or date.min; b_e = b_end or date.max
     return not (a_e < b_s or b_e < a_s)
 
+
+# 변경된 부분 -----------------------------------------  
 def filter_programs(docs: List[ProgramDoc], req_start: Optional[date], req_end: Optional[date], status_filter: Optional[str]) -> List[ProgramDoc]:
     out = []
     for d in docs:
         if status_filter and (d.status or "").strip() != status_filter:
             continue
+
+        # ✅ 2. 날짜 없는 문서 제거
+        if not d.start_date and not d.end_date:
+            continue
+
+
         if req_start or req_end:
             if not overlaps(d.start_date, d.end_date, req_start, req_end):
                 continue
+      
+# ----------------------------------------------------   
+
         out.append(d)
     def sort_key(x: ProgramDoc):
         sd = x.start_date or date.min
@@ -375,12 +441,20 @@ URL_PRIORITY_WORDS = [
     "전문투어", "투어", "전문 코스", "코스",
     "공지", "소식", "모집공고", "온라인 문의",
     # ▼ 우선순위 강화
-    "커뮤니티", "도시재생+", "도시재생플러스", "프로그램 신청", "오시는길", "주소", "링크", "url"
+    "커뮤니티", "도시재생+", "도시재생플러스", "프로그램 신청", "오시는길", "주소", "링크", "url", "sns"
 ]
 
 def _should_prioritize_url(q: str) -> bool:
     t = (q or "").lower()
-    return any(w.lower() in t for w in URL_PRIORITY_WORDS)
+
+    if is_program_date_query(t):
+        #print("[우선순위 우회] 프로그램 관련 질문 감지됨:", q)
+        return False
+
+    hit = any(w.lower() in t for w in URL_PRIORITY_WORDS)
+    #print(f"[URL 우선순위 판단] '{q}' → {hit}")
+    return hit
+
 
 def format_program_list_answer(filtered: List[ProgramDoc], req_start: Optional[date], req_end: Optional[date], status_filter: Optional[str], limit: int = 20) -> str:
     hdr = "요청하신"
@@ -435,7 +509,12 @@ async def ask_async(question: str, session_id: Optional[str] = None) -> str:
     cache_key = _cache_key((session_id or "") + "|" + q)
     if cached := await _get_cached(cache_key):
         return _to_html(cached)
-        
+
+    # 질문에 'sns'나 '블로그'있을 경우 우선 처리
+    if any(w in q.lower() for w in ["블로그", "sns", "인스타그램"]):
+        hit_link = find_url_answer(q)
+        if hit_link:
+            return _to_html(hit_link.html)    
 
     # 0) FAQ(강)
     faq_exact = find_faq_answer(q, hard_threshold=100, soft_threshold=100)
@@ -474,13 +553,16 @@ async def ask_async(question: str, session_id: Optional[str] = None) -> str:
         await _save_state(session_id, {**state, "last_intent": "center_intro"})
         return _to_html(ci)
 
-    # 3) URL 라우터(아카이브/투어/커뮤니티/도시재생+ 섹션 링크)
-    hit = find_url_answer(q)
-    if hit:
-        html_out = hit.html
-        asyncio.create_task(_set_cached(cache_key, html_out))
-        await _save_state(session_id, {**state, "last_intent": "url_router"})
-        return _to_html(html_out)
+# 변경된 부분 -------------------------------------------------------
+     # 3) URL 라우터(아카이브/투어/커뮤니티/도시재생+ 섹션 링크)
+    if not is_program_date_query(q):
+        hit = find_url_answer(q)
+        if hit:
+            html_out = hit.html
+            asyncio.create_task(_set_cached(cache_key, html_out))
+            await _save_state(session_id, {**state, "last_intent": "url_router"})
+            return _to_html(html_out)
+
 
     # 4) 프로그램 기간/상태
     q_norm = q.lower()
@@ -493,7 +575,8 @@ async def ask_async(question: str, session_id: Optional[str] = None) -> str:
         asyncio.create_task(_set_cached(cache_key, answer))
         await _save_state(session_id, {**state, "last_intent": "program_period"})
         return _to_html(answer)
-
+# ---------------------------------------------------------------------
+   
     # 5) 로컬 → LLM
     local_ctx, best, nraw = _local_ctx(q)
     if local_ctx and (best >= LOCAL_HIT_THRES or nraw > 0):
