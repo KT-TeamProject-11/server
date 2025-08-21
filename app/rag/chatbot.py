@@ -1,14 +1,3 @@
-# -*- coding: utf-8 -*-
-"""
-천안시 도시재생지원센터 전용 챗봇 메인
-
-우선순위
-1) FAQ(강) →
-2) 센터소개/오시는길(지도), 사업소개(정적 카드/단답) →
-3) URL 라우터(아카이브/투어/커뮤니티/도시재생+ 등) ← **우선어 강화**
-4) 프로그램 기간/상태 →
-5) 로컬RAG/FAQ(약)/퍼지/웹 폴백
-"""
 from __future__ import annotations
 
 import asyncio, contextlib, hashlib, html, json, os, re, textwrap

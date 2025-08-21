@@ -1,19 +1,4 @@
 # -*- coding: utf-8 -*-
-"""
-천안 URC 크롤러(클린 버전) + 이미지 OCR(개선판) + 로컬 이미지 인제스트
-- 내부 도메인: BFS 확장하여 본문/이미지 저장
-- 외부 도메인: 1-hop 저장
-- 공통: 저장 즉시 OCR → .txt 사이드카 저장 + manifest.jsonl 기록
-- 로컬 이미지 인제스트: app/crawler/images/<문서폴더>/*.png|jpg|gif ...
-  (폴더 1개 = 문서 1개로 취급)
-
-개선점:
-- PaddleOCR 기반 한국어 강화 + 전처리 앙상블 + 회전 시도 + 한글 띄어쓰기 보정
-- Tesseract/EasyOCR(선택) 폴백
-- GIF 프레임/투명 배경/저대비 대응 강화
-- '오시는길' 유형 표(위치/Tel/Fax/이메일) 구조화 추출 → manifest.contacts 및 MD 하단 요약 삽입
-"""
-
 from __future__ import annotations
 
 import os
@@ -32,112 +17,48 @@ from urllib.parse import urljoin, urlparse, urlunparse
 import aiohttp
 from bs4 import BeautifulSoup
 
-# ────────────────────────────────────────────────────────────
-# OCR 옵션 (환경변수로 제어)
-ENABLE_OCR: bool    = os.getenv("ENABLE_OCR", "1") == "1"
-# 여러 백엔드 순서를 콤마로 지정: "paddle,tesseract,easyocr"
-OCR_BACKENDS: List[str] = [s.strip().lower() for s in os.getenv("OCR_BACKENDS", "paddle,tesseract").split(",") if s.strip()]
-OCR_LANG: str       = os.getenv("OCR_LANG", "kor+eng")           # tesseract 호환 표기
-OCR_MIN_CHARS: int  = int(os.getenv("OCR_MIN_CHARS", "15"))      # 너무 짧은 노이즈는 버림
-OCR_ATTACH_TO_MD: bool = os.getenv("OCR_ATTACH_TO_MD", "1") == "1"
-
-# 인식률 개선용 옵션
-OCR_MIN_CONF: float = float(os.getenv("OCR_MIN_CONF", "0.5"))    # Paddle/Easy 신뢰도 필터
-PADDLE_OCR_LANG: Optional[str] = os.getenv("PADDLE_OCR_LANG")    # 기본 None → 자동 유추
-TESSERACT_CMD: Optional[str] = os.getenv("TESSERACT_CMD")        # /usr/bin/tesseract 등
-MAX_GIF_FRAMES: int = int(os.getenv("MAX_GIF_FRAMES", "10"))
-
-# 앙상블/회전/스케일 옵션
-OCR_USE_ENS: bool   = os.getenv("OCR_USE_ENS", "1") == "1"       # 전처리 앙상블 사용
-OCR_ROTATE_ALL: bool= os.getenv("OCR_ROTATE_ALL", "1") == "1"    # 0/90/180/270 모두 시도
-OCR_SCALE_UP: float = float(os.getenv("OCR_SCALE_UP", "1.6"))    # 작은 글자 확대 배율(<=2 추천)
-
-# pytesseract / PIL
-_TESS_AVAILABLE = False
-try:
-    import pytesseract
-    if TESSERACT_CMD:
-        pytesseract.pytesseract.tesseract_cmd = TESSERACT_CMD
-    from PIL import Image, ImageOps, ImageSequence, ImageChops, ImageFilter
-    _TESS_AVAILABLE = True
-except Exception:
-    Image = None            # type: ignore
-    ImageOps = None         # type: ignore
-    ImageSequence = None    # type: ignore
-    ImageChops = None       # type: ignore
-    ImageFilter = None      # type: ignore
-
-# OpenCV
-try:
-    import cv2
-    _CV2 = True
-except Exception:
-    _CV2 = False
-
-# PaddleOCR (기본 백엔드)
-_PADDLE_AVAILABLE = False
-_paddle_ocr = None
-try:
-    from paddleocr import PaddleOCR  # type: ignore
-    _PADDLE_AVAILABLE = True
-except Exception:
-    _PADDLE_AVAILABLE = False
-
-# EasyOCR (선택)
-_EASY_AVAILABLE = False
-_easy_reader = None
-try:
-    import easyocr  # type: ignore
-    _EASY_AVAILABLE = True
-except Exception:
-    _EASY_AVAILABLE = False
-
-
-def _infer_paddle_lang(ocr_lang: str, explicit: Optional[str]) -> str:
-    if explicit:
-        return explicit
-    s = (ocr_lang or "").lower()
-    if "kor" in s or "ko" in s:
-        return "korean"
-    return "en"
-
-if ENABLE_OCR and _PADDLE_AVAILABLE and ("paddle" in OCR_BACKENDS):
-    with contextlib.suppress(Exception):
-        _paddle_ocr = PaddleOCR(
-            lang=_infer_paddle_lang(OCR_LANG, PADDLE_OCR_LANG),
-            use_angle_cls=True,
-            show_log=False
-        )
-
-if ENABLE_OCR and _EASY_AVAILABLE and ("easyocr" in OCR_BACKENDS):
-    with contextlib.suppress(Exception):
-        langs = ["ko", "en"] if "kor" in OCR_LANG or "ko" in OCR_LANG else ["en"]
-        _easy_reader = easyocr.Reader(langs, gpu=False, verbose=False)  # type: ignore
+# 설정 모듈에서 모든 환경설정 가져오기
+from app.config import (
+    CLEAN_DIR,
+    HTTP_USER_AGENT, REQUEST_TIMEOUT_SEC, CONCURRENCY, BATCH_GATHER,
+    ENABLE_OCR, OCR_BACKENDS, OCR_LANG, OCR_MIN_CHARS, OCR_ATTACH_TO_MD,
+    OCR_MIN_CONF, PADDLE_OCR_LANG, TESSERACT_CMD, MAX_GIF_FRAMES,
+    OCR_USE_ENS, OCR_ROTATE_ALL, OCR_SCALE_UP,
+    LOCAL_IMAGE_ROOT, LOCAL_IMAGE_DEFAULT_CATEGORY, SEEDS_FILE
+)
 
 # ────────────────────────────────────────────────────────────
-# 로컬 이미지 기본 루트들: images / img 둘 다 자동 탐지
+# 로컬 이미지 기본 루트: 기본(images, img) + 환경변수(LOCAL_IMAGE_ROOT)
 _DEFAULT_LOCAL_ROOTS = [
     Path(__file__).resolve().parent / "images",
     Path(__file__).resolve().parent / "img",
 ]
-_LOCAL_ENV = os.getenv("LOCAL_IMAGE_ROOT", "")
-LOCAL_IMAGE_ROOTS = [Path(_LOCAL_ENV)] if _LOCAL_ENV else [p for p in _DEFAULT_LOCAL_ROOTS if p.exists()]
+LOCAL_IMAGE_ROOTS = [Path(LOCAL_IMAGE_ROOT)] if LOCAL_IMAGE_ROOT else [p for p in _DEFAULT_LOCAL_ROOTS if p.exists()]
 
-# 저장 베이스: app/data/clean
-CLEAN_BASE = Path(__file__).resolve().parent.parent / "data" / "clean"
+# 저장 베이스: app/data/clean → 환경변수 CLEAN_DIR 사용
+CLEAN_BASE = Path(CLEAN_DIR).resolve()
 
-HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; CheonanURC-CleanBot/1.0)"}
-CONCURRENCY = 6
-REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=30)
-BATCH_GATHER = 64
+HEADERS = {"User-Agent": HTTP_USER_AGENT}
+REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=REQUEST_TIMEOUT_SEC)
 
 # 저장할 이미지 확장자
 IMG_EXTS    = (".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".tif", ".tiff", ".avif", ".jp2", ".svg")
 RASTER_EXTS = (".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff", ".jp2", ".gif")
 
 # ────────────────────────────────────────────────────────────
-# 홈페이지 SEEDS
-SEEDS = {
+# 홈페이지 SEEDS: 환경변수 SEEDS_FILE(JSON)로 대체 가능, 없으면 기본 사용
+def _load_seeds_from_file(path: str) -> Optional[Dict[str, List[str]]]:
+    p = Path(path)
+    if not p.exists():
+        return None
+    with contextlib.suppress(Exception):
+        data = json.loads(p.read_text(encoding="utf-8"))
+        # {"main":[...], "instagram":[...], ...} 형태 기대
+        if isinstance(data, dict):
+            return {k: list(v) for k, v in data.items() if isinstance(v, (list, tuple))}
+    return None
+
+SEEDS_DEFAULT: Dict[str, List[str]] = {
     "main": ["https://www.cheonanurc.or.kr/"],
     "instagram": [
         "https://www.instagram.com/cheonan_urc/?hl=ko",
@@ -158,6 +79,7 @@ SEEDS = {
     "도시재생+": ["https://www.cheonanurc.or.kr/new","https://www.cheonanurc.or.kr/41","https://www.cheonanurc.or.kr/64","https://www.cheonanurc.or.kr/78","https://www.cheonanurc.or.kr/97","https://www.cheonanurc.or.kr/98","https://www.cheonanurc.or.kr/99","https://www.cheonanurc.or.kr/100", "https://www.cheonanurc.or.kr/144"],
     "아카이브": ["https://www.cheonanurc.or.kr/36","https://www.cheonanurc.or.kr/35","https://www.cheonanurc.or.kr/37","https://www.cheonanurc.or.kr/108"],
 }
+SEEDS: Dict[str, List[str]] = _load_seeds_from_file(SEEDS_FILE) if SEEDS_FILE else SEEDS_DEFAULT
 
 # ────────────────────────────────────────────────────────────
 def normalize_url(u: str) -> str:
@@ -392,6 +314,67 @@ def _extract_contact_table(soup: BeautifulSoup) -> Optional[Dict[str, List[str]]
 
 # ────────────────────────────────────────────────────────────
 # OCR 유틸 - 전처리/후처리/앙상블 (투명/GIF/저대비 개선 포함)
+
+# pytesseract / PIL
+_TESS_AVAILABLE = False
+try:
+    import pytesseract
+    if TESSERACT_CMD:
+        pytesseract.pytesseract.tesseract_cmd = TESSERACT_CMD
+    from PIL import Image, ImageOps, ImageSequence, ImageChops, ImageFilter
+    _TESS_AVAILABLE = True
+except Exception:
+    Image = None            # type: ignore
+    ImageOps = None         # type: ignore
+    ImageSequence = None    # type: ignore
+    ImageChops = None       # type: ignore
+    ImageFilter = None      # type: ignore
+
+# OpenCV
+try:
+    import cv2
+    _CV2 = True
+except Exception:
+    _CV2 = False
+
+# PaddleOCR (기본 백엔드)
+_PADDLE_AVAILABLE = False
+_paddle_ocr = None
+try:
+    from paddleocr import PaddleOCR  # type: ignore
+    _PADDLE_AVAILABLE = True
+except Exception:
+    _PADDLE_AVAILABLE = False
+
+# EasyOCR (선택)
+_EASY_AVAILABLE = False
+_easy_reader = None
+try:
+    import easyocr  # type: ignore
+    _EASY_AVAILABLE = True
+except Exception:
+    _EASY_AVAILABLE = False
+
+def _infer_paddle_lang(ocr_lang: str, explicit: Optional[str]) -> str:
+    if explicit:
+        return explicit
+    s = (ocr_lang or "").lower()
+    if "kor" in s or "ko" in s:
+        return "korean"
+    return "en"
+
+if ENABLE_OCR and _PADDLE_AVAILABLE and ("paddle" in OCR_BACKENDS):
+    with contextlib.suppress(Exception):
+        _paddle_ocr = PaddleOCR(
+            lang=_infer_paddle_lang(OCR_LANG, PADDLE_OCR_LANG),
+            use_angle_cls=True,
+            show_log=False
+        )
+
+if ENABLE_OCR and _EASY_AVAILABLE and ("easyocr" in OCR_BACKENDS):
+    with contextlib.suppress(Exception):
+        langs = ["ko", "en"] if "kor" in OCR_LANG or "ko" in OCR_LANG else ["en"]
+        _easy_reader = easyocr.Reader(langs, gpu=False, verbose=False)  # type: ignore
 
 def _cv2_from_pil(img: "Image.Image"):
     import numpy as np
@@ -875,18 +858,18 @@ async def save_external_once_clean(category: str, seeds: List[str]):
 async def ingest_all_locals():
     for root in LOCAL_IMAGE_ROOTS:
         print(f"[LOCAL-INGEST] {root}")
-        await ingest_local_images(root, default_category=os.getenv("LOCAL_IMAGE_DEFAULT_CATEGORY", "센터소개"))
+        await ingest_local_images(root, default_category=LOCAL_IMAGE_DEFAULT_CATEGORY)
 
 async def main():
     CLEAN_BASE.mkdir(parents=True, exist_ok=True)
 
     external_cats = ["instagram", "blog", "youtube", "band"]
     for cat in external_cats:
-        await save_external_once_clean(cat, SEEDS[cat])
+        await save_external_once_clean(cat, SEEDS.get(cat, []))
 
     internal_cats = [k for k in SEEDS.keys() if k not in external_cats]
     for cat in internal_cats:
-        await crawl_internal_clean(cat, SEEDS[cat])
+        await crawl_internal_clean(cat, SEEDS.get(cat, []))
 
     await ingest_all_locals()
 
