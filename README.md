@@ -245,7 +245,7 @@ Swagger UI:
 
 ## 프론트엔드 연동
 
-- (예시) 별도 프론트엔드 레포: https://github.com/KT-TeamProject-11/client_v2
+- ->별도 프론트엔드 레포: https://github.com/KT-TeamProject-11/client_v2
 - 기본은 백엔드 `http://localhost:8555`에 연결합니다.  
   프록시/도메인을 쓰는 경우 `.env` 또는 프런트 설정에서 API 베이스 URL을 맞춰 주세요.
 
