@@ -8,27 +8,21 @@ import mimetypes, os, re, unicodedata
 from urllib.parse import unquote
 
 from app.api.tts import router as tts_router
-from app.api.routes import router as api_router   # ✅ 직접 import
+from app.api.routes import router as api_router   
 
-from .config import STATIC_URL_PREFIX, STATIC_DIR
+from app.config import (
+    STATIC_URL_PREFIX, STATIC_DIR,
+    CORS_ORIGINS,
+)
 
 app = FastAPI(title="Cheonan URC Chatbot")
 app.include_router(tts_router)
-app.include_router(api_router)  # ✅ 여기서 /chat, /ask 등록됨
+app.include_router(api_router)
 
-# CORS
-origins = [
-    "http://localhost",
-    "http://127.0.0.1",
-    "http://localhost:8666",
-    "http://127.0.0.1:8666",
-    "http://localhost:8667",
-    "http://222.116.135.71:8666",
-    "http://222.116.135.71:8666/",
-]
+# CORS (환경변수에서 로드)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
+    allow_origins=CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

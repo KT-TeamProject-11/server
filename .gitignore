@@ -1,25 +1,48 @@
-# __pycache__/
-# *.py[cod]
-# *.so
-# *.egg
-# *.egg-info/
-# dist/
-# build/
-
-venv/
-.env
-
-.vscode/
-
-# app/data/index.faiss/
-# app/data/index.faiss/*
-
-# app/data/clean/
-# app/data/clean/*
-
-.DS_Store
-
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg-info/
+.eggs/
+.build/
+dist/
+build/
 *.log
 
+# venv
+.venv/
+venv/
+ENV/
+env/
+pip-wheel-metadata/
+
+# IDE / OS
 .idea/
-*.iml
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Data / Index / Cache
+app/data/index/
+app/data/clean/
+app/data/cache/
+app/data/tmp/
+.cache/
+huggingface/
+sentence_transformers/
+
+# Models (다운로드 캐시)
+*.pt
+*.bin
+*.onnx
+
+# Env / Secrets
+.env
+.env.*
+!*.example
+
+# Static uploads (필요 시)
+app/static/uploads/
+tmp/

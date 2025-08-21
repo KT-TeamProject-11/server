@@ -1,4 +1,3 @@
-# app/rag/embeddings.py
 import os
 import torch
 from functools import lru_cache

@@ -5,7 +5,7 @@ from pydantic import BaseModel
 from typing import Optional, AsyncGenerator
 from ..rag.chatbot import ask_async
 
-router = APIRouter()  # ✅ 여기에 라우터 정의
+router = APIRouter() 
 
 class AskBody(BaseModel):
     message: str
