@@ -7,22 +7,21 @@
 [![HuggingFace](https://img.shields.io/badge/HuggingFace-Embeddings-ffcc4d.svg?logo=huggingface&logoColor=white)](https://huggingface.co/)
 
 
-천안시 도시재생지원센터 전용 **챗봇 백엔드**입니다.  
-FastAPI 서버에 **RAG 파이프라인(FAISS + BM25 + 임베딩)**을 얹어 `/api/chat`으로 들어온 질문에 답합니다.  
-런타임 설정은 모두 **`.env`**로 관리합니다.
+천안시 도시재생지원센터 전용 챗봇 백엔드입니다.    
+FastAPI 서버에 RAG 파이프라인(FAISS + BM25 + 임베딩)을 얹어 `/api/chat`으로 들어온 질문에 답합니다.   
+런타임 설정은 모두 `.env`로 관리합니다.  
 
 ---
 
 ## 목차
-
 - [디렉터리 구조](#디렉터리-구조)
-- [⚙️ 빠른 시작](#빠른-시작)
+- [빠른 시작](#빠른-시작)
 - [API](#api)
   - [POST `/api/chat`](#post-apichat)
   - [TTS (edge-tts)](#tts-edge-tts)
 - [아키텍처 개요](#아키텍처-개요)
 - [주요 환경변수](#주요-환경변수)
-- [Makefile (예시)](#makefile-예시)
+- [Makefile](#makefile)
 - [프론트엔드 연동](#프론트엔드-연동)
 
 
@@ -62,7 +61,7 @@ FastAPI 서버에 **RAG 파이프라인(FAISS + BM25 + 임베딩)**을 얹어 `/
 
 ---
 
-## ⚙️ 빠른 시작
+## 빠른 시작
 
 ### 1) 저장소 클론
     git clone https://github.com/KT-TeamProject-11/server
@@ -224,7 +223,7 @@ Swagger UI:
 
 ---
 
-## Makefile (예시)
+## Makefile
 
     install:
     	pip install -r requirements.txt
